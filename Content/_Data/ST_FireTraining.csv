@@ -6,8 +6,7 @@ Key,SourceString
 "Feedback.OffCenter","분사 중심을 불의 밑부분에 맞추세요."
 "Feedback.Occluded","장애물에 막혀 소화약제가 도달하지 않습니다."
 "Feedback.ExtinguisherLow","소화기 잔량이 얼마 남지 않았습니다."
-"Feedback.ExtinguisherEmpty","소화기가 비었습니다.
-즉시 대피하세요."
+"Feedback.ExtinguisherEmpty","소화기가 비었습니다."
 "Feedback.EvacuateNow","가정용 소화기로 진압하기 어렵습니다.
 즉시 대피하세요."
 "Feedback.GoodAim","불의 밑부분을 올바르게 조준하고 있습니다."
@@ -20,3 +19,13 @@ Key,SourceString
 "Result.FailedTimeout","제한시간 안에 진압하거나 대피하지 못했습니다."
 "Feedback.WrongExtinguisher","화재 종류에 맞는 소화기를 사용하세요."
 "Feedback.SweepRequired","불의 밑부분을 좌우로 쓸어가며 분사하세요."
+"Result.Header","훈련 결과"
+"Result.Title.DangerZone","위험 구역 진입"
+"Result.Title.IgnoredEvacuation","대피 지시 불이행"
+"Result.Title.Timeout","제한시간 초과"
+"Result.Description.Extinguished","모든 화재를 진압하고 재발화 여부를 확인했습니다."
+"Result.Description.Evacuated","진압이 어려운 상황을 판단하고 안전하게 대피했습니다."
+"Result.Label.CompletionTime","완료 시간"
+"Result.Label.FailureTime","실패 시점"
+"Result.Label.AgentUsed","약제 사용량"
+"Result.Value.AgentKg","{0} kg"

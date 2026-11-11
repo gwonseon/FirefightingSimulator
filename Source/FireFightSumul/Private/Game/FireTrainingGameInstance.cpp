@@ -40,17 +40,32 @@ bool UFireTrainingGameInstance::StartSelectedScenario()
 		}
 	}
 
+	ClearTrainingResult();
 	UGameplayStatics::OpenLevel(this, LevelName);
 	return true;
 }
 
 void UFireTrainingGameInstance::OpenScenarioSelect()
 {
+	ClearTrainingResult();
 	UGameplayStatics::OpenLevel(this, FireTrainingLevels::Select);
 }
 
 void UFireTrainingGameInstance::OpenStartMenu()
 {
 	SelectedScenario = nullptr;
+	ClearTrainingResult();
 	UGameplayStatics::OpenLevel(this, FireTrainingLevels::Start);
+}
+
+void UFireTrainingGameInstance::SetTrainingResult(const FTrainingResult& InResult)
+{
+	TrainingResult = InResult;
+	bHasTrainingResult = true;
+}
+
+void UFireTrainingGameInstance::ClearTrainingResult()
+{
+	TrainingResult = FTrainingResult();
+	bHasTrainingResult = false;
 }

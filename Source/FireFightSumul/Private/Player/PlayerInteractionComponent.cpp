@@ -158,6 +158,7 @@ void UPlayerInteractionComponent::PrimaryInteract()
 	}
 	if (!bSpraying && Extinguisher && Extinguisher->GetRemainingAgentKg() <= 0.0f)
 	{
+		NotifyExtinguisherStatusChanged();
 		ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherEmpty);
 	}
 }
@@ -221,11 +222,15 @@ void UPlayerInteractionComponent::ContinuePrimaryInteract()
 	ETrainingFeedbackType FeedbackType = ETrainingFeedbackType::None;
 	if (UsedAgentKg > 0.0f)
 	{
-		NotifyExtinguisherStatusChanged();
+		if (FireManager)
+		{
+			FireManager->NotifyAgentConsumed(UsedAgentKg);
+		}
 		const float ActualSpraySeconds = UsedAgentKg / DischargeRateKgPerSecond;
 		const float SuppressionRatio = Extinguisher->GetBaseSuppressionRatioPerSecond()
 			* ActualSpraySeconds * PerformanceFactor;
 		FeedbackType = ApplySpray(*Nozzle, *Extinguisher, SuppressionRatio);
+		NotifyExtinguisherStatusChanged();
 	}
 	if (Extinguisher->GetRemainingAgentKg() <= 0.0f)
 	{

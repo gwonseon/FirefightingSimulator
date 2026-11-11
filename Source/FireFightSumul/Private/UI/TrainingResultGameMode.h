@@ -2,9 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "Training/FireTrainingTypes.h"
 #include "TrainingResultGameMode.generated.h"
 
-class UUserWidget;
+class UTrainingResultWidget;
 
 UCLASS()
 class ATrainingResultGameMode : public AGameModeBase
@@ -13,13 +14,10 @@ class ATrainingResultGameMode : public AGameModeBase
 
 public:
 	ATrainingResultGameMode();
-	static void OpenResultLevel(const UObject* WorldContext, bool bSuccess);
+	static void OpenResultLevel(const UObject* WorldContext, const FTrainingResult& Result);
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 
 private:
 	UPROPERTY()
-	TSubclassOf<UUserWidget> SuccessWidgetClass;
-
-	UPROPERTY()
-	TSubclassOf<UUserWidget> FailureWidgetClass;
+	TSubclassOf<UTrainingResultWidget> ResultWidgetClass;
 };

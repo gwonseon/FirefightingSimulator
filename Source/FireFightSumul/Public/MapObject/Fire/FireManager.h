@@ -30,6 +30,7 @@ public:
 	void RegisterFire(AFireActor& Fire);
 	void NotifyFireExtinguished();
 	void NotifyPlayerEvacuated();
+	void NotifyAgentConsumed(float UsedAgentKg);
 	bool CanScheduleReignition(float DefaultChance) const;
 	bool ShouldReignite(float DefaultChance);
 
@@ -68,6 +69,8 @@ private:
 	bool bTrainingFinished = false;
 	bool bScenarioStarted = false;
 	bool bTrashBinGuaranteedReignitionUsed = false;
+	double ScenarioStartTimeSeconds = 0.0;
+	float TotalUsedAgentKg = 0.0f;
 	EFireScenarioState ScenarioState = EFireScenarioState::None;
 	FVector InitialFireLocation = FVector::ZeroVector;
 	int32 SpreadIgnitionCount = 0;

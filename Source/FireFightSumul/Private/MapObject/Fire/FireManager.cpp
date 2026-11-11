@@ -5,6 +5,7 @@
 #include "Engine/TargetPoint.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Game/FireTrainingGameInstance.h"
 #include "MapObject/Fire/FireActor.h"
 #include "MapObject/Fire/FireSpreadAnchor.h"
 #include "TimerManager.h"
@@ -14,6 +15,31 @@ namespace
 {
 	constexpr float InitialAnchorMatchDistanceCm = 100.0f;
 	const FName TrashBinScenarioId(TEXT("TrashBin"));
+	const FName TrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
+
+	FText ResolveResultMessage(ETrainingOutcome Outcome, ETrainingFailureReason FailureReason)
+	{
+		switch (Outcome)
+		{
+		case ETrainingOutcome::Extinguished:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Result.Description.Extinguished"));
+		case ETrainingOutcome::Evacuated:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Result.Description.Evacuated"));
+		case ETrainingOutcome::Failed:
+			switch (FailureReason)
+			{
+			case ETrainingFailureReason::EnteredDangerZone:
+				return FText::FromStringTable(TrainingStringTableId, TEXT("Result.FailedDangerZone"));
+			case ETrainingFailureReason::IgnoredEvacuation:
+				return FText::FromStringTable(TrainingStringTableId, TEXT("Result.FailedEvacuation"));
+			case ETrainingFailureReason::ScenarioTimeout:
+			default:
+				return FText::FromStringTable(TrainingStringTableId, TEXT("Result.FailedTimeout"));
+			}
+		default:
+			return FText::GetEmpty();
+		}
+	}
 }
 
 void UFireManager::ToggleFireCollision()
@@ -34,6 +60,8 @@ void UFireManager::OnWorldBeginPlay(UWorld& InWorld)
 	bTrainingFinished = false;
 	bScenarioStarted = false;
 	bTrashBinGuaranteedReignitionUsed = false;
+	ScenarioStartTimeSeconds = 0.0;
+	TotalUsedAgentKg = 0.0f;
 	ScenarioState = EFireScenarioState::None;
 	ActiveScenarioData = nullptr;
 }
@@ -64,6 +92,8 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	bTrainingFinished = false;
 	bScenarioStarted = true;
 	bTrashBinGuaranteedReignitionUsed = false;
+	ScenarioStartTimeSeconds = 0.0;
+	TotalUsedAgentKg = 0.0f;
 	ScenarioState = EFireScenarioState::Ready;
 
 	const float InitialIntensity = FMath::Clamp(InScenarioData->InitialFireIntensityRatio, 0.01f, 1.0f);
@@ -79,6 +109,7 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	}
 
 	ScenarioState = EFireScenarioState::Active;
+	ScenarioStartTimeSeconds = GetWorldRef().GetTimeSeconds();
 	InitializeSpreadSystem(StartPoint->GetActorLocation());
 
 	UE_LOG(LogTemp, Log, TEXT("Started fire scenario '%s' at TargetPoint '%s' (Tag=%s, Mode=%s)."),
@@ -522,6 +553,16 @@ void UFireManager::HandleTrackedFireIntensityChanged(float IntensityRatio)
 	}
 }
 
+void UFireManager::NotifyAgentConsumed(float UsedAgentKg)
+{
+	if (!bTrainingWorld || bTrainingFinished || UsedAgentKg <= 0.0f)
+	{
+		return;
+	}
+
+	TotalUsedAgentKg += UsedAgentKg;
+}
+
 void UFireManager::RequireEvacuation()
 {
 	if (!bTrainingWorld || bTrainingFinished ||
@@ -581,11 +622,19 @@ void UFireManager::FinishTraining(ETrainingOutcome Outcome, ETrainingFailureReas
 	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
 	GetWorldRef().GetTimerManager().ClearTimer(EvacuationGraceTimer);
 	GetWorldRef().GetTimerManager().ClearTimer(SpreadEvaluationTimer);
-	const bool bSuccess = Outcome == ETrainingOutcome::Extinguished ||
-		Outcome == ETrainingOutcome::Evacuated;
-	UE_LOG(LogTemp, Log, TEXT("Training finished. Outcome=%d FailureReason=%d"),
-		static_cast<int32>(Outcome), static_cast<int32>(FailureReason));
-	ATrainingResultGameMode::OpenResultLevel(&GetWorldRef(), bSuccess);
+	FTrainingResult Result;
+	Result.Outcome = Outcome;
+	Result.FailureReason = FailureReason;
+	Result.CompletionTime = static_cast<float>(FMath::Max(
+		0.0, GetWorldRef().GetTimeSeconds() - ScenarioStartTimeSeconds));
+	Result.UsedAgentKg = FMath::Max(0.0f, TotalUsedAgentKg);
+	Result.ResultMessage = ResolveResultMessage(Outcome, FailureReason);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("Training finished. Outcome=%d FailureReason=%d Time=%.1fs UsedAgent=%.2fkg"),
+		static_cast<int32>(Outcome), static_cast<int32>(FailureReason),
+		Result.CompletionTime, Result.UsedAgentKg);
+	ATrainingResultGameMode::OpenResultLevel(&GetWorldRef(), Result);
 }
 
 void UFireManager::Deinitialize()
@@ -603,6 +652,8 @@ void UFireManager::Deinitialize()
 	bTrainingFinished = false;
 	bScenarioStarted = false;
 	bTrashBinGuaranteedReignitionUsed = false;
+	ScenarioStartTimeSeconds = 0.0;
+	TotalUsedAgentKg = 0.0f;
 	ScenarioState = EFireScenarioState::None;
 	Super::Deinitialize();
 }

@@ -13,6 +13,8 @@ class AFireFightSumulGameMode : public AGameModeBase
 
 public:
 	AFireFightSumulGameMode();
+
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 };
 
 

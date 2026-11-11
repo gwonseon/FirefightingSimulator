@@ -20,7 +20,10 @@ public:
 	static const FName AimTag;
 
 	void SetInitialIntensityRatio(float Ratio);
-	void SetFireClass(EFireClass InFireClass) { FireClass = InFireClass; }
+	void ConfigureMaterial(FName InMaterialTag, EFireClass InFireClass,
+		float InGrowthMultiplier, float InSuppressionMultiplier);
+	void SetGrowthToPeakSeconds(float Seconds);
+	FName GetMaterialTag() const { return MaterialTag; }
 	EFireClass GetFireClass() const { return FireClass; }
 	float GetIntensityRatio() const;
 	double GetLastSuppressionTime() const { return LastSuppressionTime; }
@@ -34,6 +37,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fire")
 	void ApplySuppressionRatio(float RatioAmount);
 
+	bool ReigniteFromNearbyFire(float StartIntensityRatio);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -41,6 +46,7 @@ protected:
 
 private:
 	void SetIntensity(float NewIntensity);
+	void BeginGrowth(double StartTime);
 	void ScheduleReignition();
 	void TryReignite();
 
@@ -57,11 +63,23 @@ private:
 		meta = (AllowPrivateAccess = "true"))
 	EFireClass FireClass = EFireClass::A;
 
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Fire|Classification",
+		meta = (AllowPrivateAccess = "true"))
+	FName MaterialTag = NAME_None;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Fire|Classification",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float GrowthMultiplier = 1.0f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Fire|Classification",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float SuppressionMultiplier = 1.0f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Fire|Recovery", meta = (ClampMin = "0.0", Units = "s"))
 	float RecoveryDelay = 3.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Fire|Recovery", meta = (ClampMin = "0.0"))
-	float RecoveryRate = 10.0f;
+	UPROPERTY(VisibleInstanceOnly, Category = "Fire|Growth")
+	float GrowthToPeakSeconds = 20.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Fire|Reignition", meta = (ClampMin = "0.1", Units = "s"))
 	float ReignitionDelay = 3.0f;
@@ -80,6 +98,7 @@ private:
 	float InitialIntensityRatio = 1.0f;
 	double LastSuppressionTime = 0.0;
 	double RecoveryStartTime = 0.0;
+	float GrowthStartIntensityRatio = 1.0f;
 	FVector InitialEffectScale = FVector::OneVector;
 	FTimerHandle ReignitionTimer;
 };

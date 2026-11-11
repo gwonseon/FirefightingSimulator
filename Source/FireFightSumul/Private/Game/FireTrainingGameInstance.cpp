@@ -22,6 +22,11 @@ bool UFireTrainingGameInstance::SelectScenario(UFireScenarioDataAsset* InScenari
 	return true;
 }
 
+void UFireTrainingGameInstance::SetFireGrowthSpeedMode(EFireGrowthSpeedMode InMode)
+{
+	FireGrowthSpeedMode = InMode;
+}
+
 bool UFireTrainingGameInstance::StartSelectedScenario()
 {
 	if (!IsValid(SelectedScenario))

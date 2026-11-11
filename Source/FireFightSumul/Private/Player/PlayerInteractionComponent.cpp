@@ -279,6 +279,7 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 	const FVector Forward = Nozzle.GetForwardVector();
 	const FVector Right = Nozzle.GetRightVector();
 	const UExtinguisherDataAsset* Data = Extinguisher.GetExtinguisherData();
+	const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>();
 	const double Range = FMath::Max(1.0f, Extinguisher.GetMaxEffectiveDistanceCm());
 	const double MinSafeDistance = FMath::Clamp(
 		static_cast<double>(Extinguisher.GetMinSafeDistanceCm()), 0.0, Range);
@@ -364,7 +365,13 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 			-1.0f, 1.0f);
 		const float CenterAngleFraction = static_cast<float>(CenterAngle / HalfAngle);
 		const bool bCompatible = Extinguisher.SupportsFireClass(Fire->GetFireClass());
-		const bool bValidSweepSample = bCompatible && bIntersectsCone && !bOccluded &&
+		const float TemporaryClassKMultiplier = !bCompatible && Data &&
+			Fire->GetFireClass() == EFireClass::K && FireManager &&
+			FireManager->IsForcedReignition(EFireClass::K)
+				? FMath::Clamp(Data->UnsupportedClassKTemporarySuppressionMultiplier, 0.0f, 1.0f)
+				: 0.0f;
+		const bool bCanSuppress = bCompatible || TemporaryClassKMultiplier > 0.0f;
+		const bool bValidSweepSample = bCanSuppress && bIntersectsCone && !bOccluded &&
 			CenterDistance >= MinSafeDistance && CenterDistance <= Range &&
 			AimHeight01 <= FMath::Clamp(SweepBaseAimMaxHeight, 0.05f, 1.0f) &&
 			CenterAngleFraction <= 0.6f;
@@ -422,7 +429,7 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 			DistanceFactor = FMath::Lerp(1.0f, 0.2f, FalloffFraction);
 		}
 
-		if (bCompatible)
+		if (bCanSuppress)
 		{
 			const float AimHeightFactor = Data && Data->AimHeightCurve
 				? FMath::Clamp(Data->AimHeightCurve->GetFloatValue(AimHeight01), 0.0f, 1.0f)
@@ -430,7 +437,8 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 			const float MinimumSweepFactor = FMath::Clamp(MinimumSweepSuppressionFactor, 0.0f, 1.0f);
 			const float SweepFactor = FMath::Lerp(MinimumSweepFactor, 1.0f, SweepCoverage);
 			Fire->ApplySuppressionRatio(
-				SuppressionRatio * AngleFactor * DistanceFactor * AimHeightFactor * SweepFactor);
+				SuppressionRatio * AngleFactor * DistanceFactor * AimHeightFactor * SweepFactor *
+				(bCompatible ? 1.0f : TemporaryClassKMultiplier));
 		}
 	}
 

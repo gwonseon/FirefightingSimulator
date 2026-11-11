@@ -67,6 +67,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Performance", meta = (ClampMin = "0.0", ClampMax = "1.0", ToolTip = "Fraction of a full fire intensity removed per second under ideal conditions."))
 	float BaseSuppressionPerSecond = 0.25f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Performance|Class K",
+		meta = (ClampMin = "0.0", ClampMax = "1.0", ToolTip = "Temporary suppression multiplier applied to Class K fires when this extinguisher is not Class K rated. Set to zero for no effect."))
+	float UnsupportedClassKTemporarySuppressionMultiplier = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Performance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float LowAgentStartRatio = 0.15f;
 

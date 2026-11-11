@@ -28,6 +28,9 @@ public:
 	FName StartPointTag = TEXT("ScenarioStart.TrashBin");
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Start")
+	FName PlayerStartTag = TEXT("PlayerStart.TrashBin");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Start")
 	EFireStartSelectionMode StartSelectionMode = EFireStartSelectionMode::Fixed;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Start",
@@ -43,6 +46,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Feedback")
 	TArray<FTrainingFeedbackSetting> FeedbackSettings;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Completion")
+	EFireScenarioCompletionMode CompletionMode = EFireScenarioCompletionMode::ExtinguishOrEvacuate;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Class K Fire")
+	bool bForceClassKReignition = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Class K Fire",
+		meta = (EditCondition = "bForceClassKReignition", ClampMin = "0.1", Units = "s"))
+	float ClassKReignitionDelaySeconds = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Class K Fire",
+		meta = (EditCondition = "bForceClassKReignition", ClampMin = "0.01", ClampMax = "1.0"))
+	float ClassKReignitionStartRatio = 0.25f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timing", meta = (ClampMin = "0.0", Units = "s"))
 	float ExtinguishmentObservationSeconds = 5.0f;
 
@@ -51,9 +68,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Timing", meta = (ClampMin = "0.0", Units = "s"))
 	float ScenarioTimeoutSeconds = 180.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Limits", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float UncontrollableFireSize = 0.75f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Limits", meta = (ClampMin = "1"))
 	int32 UncontrollableFireCount = 2;

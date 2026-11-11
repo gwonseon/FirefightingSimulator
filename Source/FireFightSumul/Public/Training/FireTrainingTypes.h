@@ -11,6 +11,20 @@ enum class EFireStartSelectionMode : uint8
 };
 
 UENUM(BlueprintType)
+enum class EFireScenarioCompletionMode : uint8
+{
+	ExtinguishOrEvacuate = 0 UMETA(DisplayName = "Extinguish or Evacuate"),
+	EvacuationOnly = 1 UMETA(DisplayName = "Evacuation Only")
+};
+
+UENUM(BlueprintType)
+enum class EFireGrowthSpeedMode : uint8
+{
+	Training = 0 UMETA(DisplayName = "Training - 20 Seconds"),
+	Realistic = 1 UMETA(DisplayName = "Realistic - 8.08 Minutes")
+};
+
+UENUM(BlueprintType)
 enum class EFireClass : uint8
 {
 	A = 0 UMETA(DisplayName = "Class A - Ordinary Combustibles"),

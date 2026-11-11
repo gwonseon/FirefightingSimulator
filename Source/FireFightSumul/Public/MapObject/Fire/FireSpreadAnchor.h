@@ -14,14 +14,17 @@ class FIREFIGHTSUMUL_API AFireSpreadAnchor : public AActor
 public:
 	AFireSpreadAnchor();
 
-	FName GetMaterialTag() const { return MaterialTag; }
+	FName GetMaterialTag() const;
 	bool CanIgnite() const { return bCanIgnite; }
 	bool IsIgnited() const { return bIgnited; }
+	bool IsAwaitingReignition() const { return bAwaitingReignition; }
+	bool IsReignitionReady(double WorldTimeSeconds) const;
 	float GetAccumulatedHeat() const { return AccumulatedHeat; }
 
 	void ResetSpreadState();
 	void AddHeat(float Amount);
 	void MarkIgnited();
+	void MarkExtinguished(double WorldTimeSeconds, float CooldownSeconds);
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fire Spread",
@@ -29,7 +32,8 @@ private:
 	TObjectPtr<USphereComponent> EditorMarker;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Fire Spread",
-		meta = (AllowPrivateAccess = "true"))
+		meta = (AllowPrivateAccess = "true",
+			ToolTip = "Legacy fallback. Prefer an Actor Tag such as FireMaterial.Wood."))
 	FName MaterialTag = TEXT("Wood");
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Fire Spread",
@@ -43,4 +47,10 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Fire Spread|Runtime",
 		meta = (AllowPrivateAccess = "true"))
 	bool bIgnited = false;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Fire Spread|Runtime",
+		meta = (AllowPrivateAccess = "true"))
+	bool bAwaitingReignition = false;
+
+	double ReignitionAllowedTimeSeconds = 0.0;
 };

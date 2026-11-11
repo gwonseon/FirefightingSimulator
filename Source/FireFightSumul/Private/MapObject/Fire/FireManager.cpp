@@ -7,6 +7,7 @@
 #include "EngineUtils.h"
 #include "Game/FireTrainingGameInstance.h"
 #include "MapObject/Fire/FireActor.h"
+#include "MapObject/Fire/FireMaterialTags.h"
 #include "MapObject/Fire/FireSpreadAnchor.h"
 #include "TimerManager.h"
 #include "UI/TrainingResultGameMode.h"
@@ -88,6 +89,7 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	}
 
 	ActiveScenarioData = InScenarioData;
+	AnchorFires.Reset();
 	bTrainingWorld = true;
 	bTrainingFinished = false;
 	bScenarioStarted = true;
@@ -97,7 +99,8 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	ScenarioState = EFireScenarioState::Ready;
 
 	const float InitialIntensity = FMath::Clamp(InScenarioData->InitialFireIntensityRatio, 0.01f, 1.0f);
-	if (!IgnitePoint(*StartPoint, InitialIntensity))
+	FName InitialMaterialTag;
+	if (!IgnitePoint(*StartPoint, InitialIntensity, InitialMaterialTag))
 	{
 		UE_LOG(LogTemp, Error, TEXT("Scenario '%s' could not spawn its initial fire at '%s'."),
 			*InScenarioData->ScenarioId.ToString(), *GetNameSafe(StartPoint));
@@ -110,7 +113,14 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 
 	ScenarioState = EFireScenarioState::Active;
 	ScenarioStartTimeSeconds = GetWorldRef().GetTimeSeconds();
-	InitializeSpreadSystem(StartPoint->GetActorLocation());
+	const float ScenarioTimeoutSeconds = FMath::Max(0.0f, InScenarioData->ScenarioTimeoutSeconds);
+	if (ScenarioTimeoutSeconds > 0.0f)
+	{
+		GetWorldRef().GetTimerManager().SetTimer(ScenarioTimeoutTimer, this,
+			&UFireManager::HandleScenarioTimeout, ScenarioTimeoutSeconds, false);
+	}
+	InitializeSpreadSystem(StartPoint->GetActorLocation(), InitialMaterialTag);
+	OnScenarioStarted.Broadcast();
 
 	UE_LOG(LogTemp, Log, TEXT("Started fire scenario '%s' at TargetPoint '%s' (Tag=%s, Mode=%s)."),
 		*InScenarioData->ScenarioId.ToString(), *GetNameSafe(StartPoint),
@@ -120,8 +130,13 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	return true;
 }
 
-bool UFireManager::CanScheduleReignition(float DefaultChance) const
+bool UFireManager::CanScheduleReignition(EFireClass FireClass, float DefaultChance) const
 {
+	if (IsForcedReignition(FireClass))
+	{
+		return true;
+	}
+
 	if (IsTrashBinScenario())
 	{
 		return !bTrashBinGuaranteedReignitionUsed;
@@ -130,8 +145,13 @@ bool UFireManager::CanScheduleReignition(float DefaultChance) const
 	return DefaultChance > 0.0f;
 }
 
-bool UFireManager::ShouldReignite(float DefaultChance)
+bool UFireManager::ShouldReignite(EFireClass FireClass, float DefaultChance)
 {
+	if (IsForcedReignition(FireClass))
+	{
+		return true;
+	}
+
 	if (IsTrashBinScenario())
 	{
 		if (bTrashBinGuaranteedReignitionUsed)
@@ -147,9 +167,63 @@ bool UFireManager::ShouldReignite(float DefaultChance)
 	return FMath::FRand() < FMath::Clamp(DefaultChance, 0.0f, 1.0f);
 }
 
+bool UFireManager::IsForcedReignition(EFireClass FireClass) const
+{
+	return FireClass == EFireClass::K && ActiveScenarioData &&
+		ActiveScenarioData->bForceClassKReignition;
+}
+
+float UFireManager::ResolveReignitionDelay(EFireClass FireClass, float DefaultDelay) const
+{
+	if (IsForcedReignition(FireClass))
+	{
+		return FMath::Max(0.1f, ActiveScenarioData->ClassKReignitionDelaySeconds);
+	}
+
+	return FMath::Max(0.1f, DefaultDelay);
+}
+
+float UFireManager::ResolveReignitionStartRatio(EFireClass FireClass, float DefaultRatio) const
+{
+	if (IsForcedReignition(FireClass))
+	{
+		return FMath::Clamp(ActiveScenarioData->ClassKReignitionStartRatio, 0.01f, 1.0f);
+	}
+
+	return FMath::Clamp(DefaultRatio, 0.01f, 1.0f);
+}
+
 bool UFireManager::IsTrashBinScenario() const
 {
 	return ActiveScenarioData && ActiveScenarioData->ScenarioId == TrashBinScenarioId;
+}
+
+bool UFireManager::IsEvacuationOnlyScenario() const
+{
+	return ActiveScenarioData &&
+		ActiveScenarioData->CompletionMode == EFireScenarioCompletionMode::EvacuationOnly;
+}
+
+float UFireManager::ResolveGrowthToPeakSeconds() const
+{
+	const UFireSimulationDataAsset* FireRules = ActiveScenarioData
+		? ActiveScenarioData->FireRules.Get() : nullptr;
+	if (!FireRules)
+	{
+		return 20.0f;
+	}
+
+	EFireGrowthSpeedMode GrowthMode = EFireGrowthSpeedMode::Training;
+	if (const UFireTrainingGameInstance* TrainingGameInstance =
+		Cast<UFireTrainingGameInstance>(GetWorldRef().GetGameInstance()))
+	{
+		GrowthMode = TrainingGameInstance->GetFireGrowthSpeedMode();
+	}
+
+	const float GrowthSeconds = GrowthMode == EFireGrowthSpeedMode::Realistic
+		? FireRules->RealisticGrowthToPeakSeconds
+		: FireRules->TrainingGrowthToPeakSeconds;
+	return FMath::Max(0.1f, GrowthSeconds);
 }
 
 ATargetPoint* UFireManager::SelectStartPoint(const UFireScenarioDataAsset& ScenarioData) const
@@ -204,24 +278,51 @@ ATargetPoint* UFireManager::SelectStartPoint(const UFireScenarioDataAsset& Scena
 	return SelectedPoint;
 }
 
-bool UFireManager::IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio)
+bool UFireManager::IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio,
+	FName& OutMaterialTag)
 {
-	const AFireSpreadAnchor* InitialAnchor = FindClosestSpreadAnchor(
-		Point.GetActorLocation(), InitialAnchorMatchDistanceCm);
-	const FName MaterialTag = InitialAnchor ? InitialAnchor->GetMaterialTag() : NAME_None;
-
-	if (!InitialAnchor)
+	OutMaterialTag = NAME_None;
+	const EFireMaterialTagResolveResult TagResult =
+		FireMaterialTags::ResolveActorMaterialTag(Point, OutMaterialTag);
+	if (TagResult == EFireMaterialTagResolveResult::Ambiguous)
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("Initial fire point '%s' has no FireSpreadAnchor within %.0fcm. Using Class A."),
-			*GetNameSafe(&Point), InitialAnchorMatchDistanceCm);
+		UE_LOG(LogTemp, Error,
+			TEXT("Initial fire point '%s' has more than one FireMaterial tag."),
+			*GetNameSafe(&Point));
+		return false;
+	}
+	if (TagResult == EFireMaterialTagResolveResult::Missing)
+	{
+		const AFireSpreadAnchor* InitialAnchor = FindClosestSpreadAnchor(
+			Point.GetActorLocation(), InitialAnchorMatchDistanceCm);
+		OutMaterialTag = InitialAnchor ? InitialAnchor->GetMaterialTag() : NAME_None;
+
+		if (!InitialAnchor)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("Initial fire point '%s' has no FireMaterial Actor Tag or nearby legacy FireSpreadAnchor. Using Class A."),
+				*GetNameSafe(&Point));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("Initial fire point '%s' has no FireMaterial Actor Tag. Using nearby legacy anchor material '%s'."),
+				*GetNameSafe(&Point), *OutMaterialTag.ToString());
+		}
 	}
 
-	return IgniteLocation(Point.GetActorLocation(), InitialIntensityRatio, MaterialTag);
+	OutMaterialTag = FireMaterialTags::Canonicalize(OutMaterialTag);
+	AFireSpreadAnchor* InitialAnchor = FindClosestSpreadAnchor(
+		Point.GetActorLocation(), InitialAnchorMatchDistanceCm, OutMaterialTag);
+	return IgniteLocation(Point.GetActorLocation(), InitialIntensityRatio, OutMaterialTag,
+		InitialAnchor);
 }
 
-bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensityRatio, FName MaterialTag)
+bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensityRatio,
+	FName MaterialTag, AFireSpreadAnchor* SourceAnchor)
 {
+	MaterialTag = FireMaterialTags::Canonicalize(MaterialTag);
+	const FFireMaterialSetting* Material = FindMaterialSetting(MaterialTag);
 	const FTransform Transform(FQuat::Identity, Location);
 	AFireActor* Fire = GetWorldRef().SpawnActorDeferred<AFireActor>(AFireActor::StaticClass(), Transform);
 	if (!Fire)
@@ -230,13 +331,20 @@ bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensit
 	}
 
 	Fire->SetInitialIntensityRatio(InitialIntensityRatio);
-	Fire->SetFireClass(ResolveFireClass(MaterialTag));
+	Fire->ConfigureMaterial(MaterialTag, ResolveFireClass(MaterialTag),
+		Material ? Material->GrowthMultiplier : 1.0f,
+		Material ? Material->SuppressionMultiplier : 1.0f);
+	Fire->SetGrowthToPeakSeconds(ResolveGrowthToPeakSeconds());
 	Fire->FinishSpawning(Transform);
 	RegisterFire(*Fire);
+	if (SourceAnchor)
+	{
+		AnchorFires.FindOrAdd(TWeakObjectPtr<AFireSpreadAnchor>(SourceAnchor)) = Fire;
+	}
 	return true;
 }
 
-void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation)
+void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation, FName InitialMaterialTag)
 {
 	ResetSpreadSystem();
 	InitialFireLocation = InitialLocation;
@@ -270,7 +378,7 @@ void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation)
 	}
 
 	if (AFireSpreadAnchor* ClosestInitialAnchor = FindClosestSpreadAnchor(
-		InitialLocation, InitialAnchorMatchDistanceCm))
+		InitialLocation, InitialAnchorMatchDistanceCm, InitialMaterialTag))
 	{
 		// This represents the object on which the Target Point already created the initial fire.
 		ClosestInitialAnchor->MarkIgnited();
@@ -313,15 +421,20 @@ void UFireManager::EvaluateFireSpread()
 
 	const float CheckInterval = FMath::Max(0.05f, FireRules->SpreadCheckInterval);
 	const float SpreadDistance = FMath::Max(1.0f, FireRules->SpreadDistanceCm);
-	const float HeatPerSecond = FMath::Max(0.0f, FireRules->SpreadHeatPerSecond);
+	const float SpreadExposureSeconds = FMath::Max(0.1f, FireRules->SpreadIgnitionExposureSeconds);
+	const float HeatPerSecond = 1.0f / SpreadExposureSeconds;
 	const float CoolingPerSecond = FMath::Max(0.0f, FireRules->SpreadCoolingPerSecond);
 	const float NewFireIntensity = FMath::Clamp(
 		FireRules->SpreadFireInitialIntensityRatio, 0.01f, 1.0f);
+	const float ReignitionMinExposure = FMath::Max(0.0f,
+		FireRules->SpreadReignitionMinExposure);
+	const double CurrentTimeSeconds = GetWorldRef().GetTimeSeconds();
 
 	for (const TWeakObjectPtr<AFireSpreadAnchor>& WeakAnchor : SpreadAnchors)
 	{
 		AFireSpreadAnchor* Anchor = WeakAnchor.Get();
 		if (!Anchor || Anchor->IsIgnited() || !Anchor->CanIgnite() ||
+			!Anchor->IsReignitionReady(CurrentTimeSeconds) ||
 			Anchor->GetMaterialTag().IsNone())
 		{
 			continue;
@@ -345,6 +458,10 @@ void UFireManager::EvaluateFireSpread()
 			const float DistanceFactor = 1.0f - Distance / SpreadDistance;
 			Exposure += Fire->GetIntensityRatio() * DistanceFactor;
 		}
+		if (Anchor->IsAwaitingReignition() && Exposure < ReignitionMinExposure)
+		{
+			Exposure = 0.0f;
+		}
 
 		const float HeatReceiveMultiplier = Material
 			? FMath::Max(0.0f, Material->HeatReceiveMultiplier) : 1.0f;
@@ -359,14 +476,37 @@ void UFireManager::EvaluateFireSpread()
 			continue;
 		}
 
-		if (IgniteLocation(Anchor->GetActorLocation(), NewFireIntensity, Anchor->GetMaterialTag()))
+		const bool bIsReignition = Anchor->IsAwaitingReignition();
+		bool bIgnitionSucceeded = false;
+		if (TWeakObjectPtr<AFireActor>* TrackedFire = AnchorFires.Find(
+			TWeakObjectPtr<AFireSpreadAnchor>(Anchor));
+			bIsReignition && TrackedFire && TrackedFire->IsValid())
+		{
+			bIgnitionSucceeded = TrackedFire->Get()->ReigniteFromNearbyFire(NewFireIntensity);
+		}
+		else
+		{
+			bIgnitionSucceeded = IgniteLocation(Anchor->GetActorLocation(), NewFireIntensity,
+				Anchor->GetMaterialTag(), Anchor);
+		}
+
+		if (bIgnitionSucceeded)
 		{
 			Anchor->MarkIgnited();
-			++SpreadIgnitionCount;
-			UE_LOG(LogTemp, Warning,
-				TEXT("Fire spread ignited anchor '%s' (Material=%s, SpreadCount=%d)."),
-				*GetNameSafe(Anchor), *Anchor->GetMaterialTag().ToString(), SpreadIgnitionCount);
-			CheckEvacuationThreshold(*Anchor);
+			if (bIsReignition)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("Nearby fire reignited anchor '%s' (Material=%s)."),
+					*GetNameSafe(Anchor), *Anchor->GetMaterialTag().ToString());
+			}
+			else
+			{
+				++SpreadIgnitionCount;
+				UE_LOG(LogTemp, Warning,
+					TEXT("Fire spread ignited anchor '%s' (Material=%s, SpreadCount=%d)."),
+					*GetNameSafe(Anchor), *Anchor->GetMaterialTag().ToString(), SpreadIgnitionCount);
+				CheckEvacuationThreshold(*Anchor);
+			}
 		}
 	}
 }
@@ -409,10 +549,11 @@ const FFireMaterialSetting* UFireManager::FindMaterialSetting(FName MaterialTag)
 		return nullptr;
 	}
 
+	const FName CanonicalMaterialTag = FireMaterialTags::Canonicalize(MaterialTag);
 	return FireRules->MaterialSettings.FindByPredicate(
-		[MaterialTag](const FFireMaterialSetting& Setting)
+		[CanonicalMaterialTag](const FFireMaterialSetting& Setting)
 		{
-			return Setting.MaterialTag == MaterialTag;
+			return FireMaterialTags::Canonicalize(Setting.MaterialTag) == CanonicalMaterialTag;
 		});
 }
 
@@ -423,6 +564,20 @@ EFireClass UFireManager::ResolveFireClass(FName MaterialTag) const
 		return Material->FireClass;
 	}
 
+	const FName CanonicalMaterialTag = FireMaterialTags::Canonicalize(MaterialTag);
+	if (CanonicalMaterialTag == FName(TEXT("FireMaterial.CookingOil")))
+	{
+		return EFireClass::K;
+	}
+	if (CanonicalMaterialTag == FName(TEXT("FireMaterial.ElectricalEnergized")))
+	{
+		return EFireClass::C;
+	}
+	if (CanonicalMaterialTag == FName(TEXT("FireMaterial.FlammableLiquid")))
+	{
+		return EFireClass::B;
+	}
+
 	UE_LOG(LogTemp, Warning,
 		TEXT("Fire MaterialTag '%s' has no matching material setting. Using Class A."),
 		MaterialTag.IsNone() ? TEXT("None") : *MaterialTag.ToString());
@@ -430,13 +585,19 @@ EFireClass UFireManager::ResolveFireClass(FName MaterialTag) const
 }
 
 AFireSpreadAnchor* UFireManager::FindClosestSpreadAnchor(
-	const FVector& Location, float MaxDistanceCm) const
+	const FVector& Location, float MaxDistanceCm, FName RequiredMaterialTag) const
 {
+	RequiredMaterialTag = FireMaterialTags::Canonicalize(RequiredMaterialTag);
 	AFireSpreadAnchor* ClosestAnchor = nullptr;
 	float ClosestDistanceSquared = FMath::Square(FMath::Max(0.0f, MaxDistanceCm));
 
 	for (TActorIterator<AFireSpreadAnchor> Anchor(&GetWorldRef()); Anchor; ++Anchor)
 	{
+		if (!RequiredMaterialTag.IsNone() &&
+			Anchor->GetMaterialTag() != RequiredMaterialTag)
+		{
+			continue;
+		}
 		const float DistanceSquared = FVector::DistSquared(Location, Anchor->GetActorLocation());
 		if (DistanceSquared <= ClosestDistanceSquared)
 		{
@@ -465,10 +626,40 @@ void UFireManager::RegisterFire(AFireActor& Fire)
 	HandleTrackedFireIntensityChanged(Fire.GetIntensityRatio());
 }
 
-void UFireManager::NotifyFireExtinguished()
+void UFireManager::NotifyFireExtinguished(AFireActor& Fire)
 {
+	AFireSpreadAnchor* ExtinguishedAnchor = nullptr;
+	for (auto It = AnchorFires.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || !It.Value().IsValid())
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		if (It.Value().Get() == &Fire)
+		{
+			ExtinguishedAnchor = It.Key().Get();
+			break;
+		}
+	}
+
+	if (ExtinguishedAnchor && ActiveScenarioData)
+	{
+		const UFireSimulationDataAsset* FireRules = ActiveScenarioData->FireRules.Get();
+		const float MinCooldown = FireRules
+			? FMath::Max(0.0f, FireRules->SpreadReignitionCooldownMinSeconds) : 1.0f;
+		const float MaxCooldown = FireRules
+			? FMath::Max(MinCooldown, FireRules->SpreadReignitionCooldownMaxSeconds) : 2.0f;
+		const float Cooldown = FMath::FRandRange(MinCooldown, MaxCooldown);
+		ExtinguishedAnchor->MarkExtinguished(GetWorldRef().GetTimeSeconds(), Cooldown);
+		UE_LOG(LogTemp, Log,
+			TEXT("Anchor '%s' can receive reignition heat again in %.2f seconds."),
+			*GetNameSafe(ExtinguishedAnchor), Cooldown);
+	}
+
 	if (!bTrainingWorld || bTrainingFinished ||
-		ScenarioState == EFireScenarioState::EvacuationRequired)
+		ScenarioState == EFireScenarioState::EvacuationRequired ||
+		IsEvacuationOnlyScenario())
 	{
 		return;
 	}
@@ -477,6 +668,30 @@ void UFireManager::NotifyFireExtinguished()
 	{
 		BeginExtinguishmentMonitoring();
 	}
+}
+
+void UFireManager::NotifyFireReignited(AFireActor& Fire)
+{
+	for (auto It = AnchorFires.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || !It.Value().IsValid())
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		if (It.Value().Get() == &Fire)
+		{
+			It.Key().Get()->MarkIgnited();
+			break;
+		}
+	}
+
+	if (!bTrainingWorld || bTrainingFinished || !IsForcedReignition(Fire.GetFireClass()))
+	{
+		return;
+	}
+
+	OnScenarioFeedbackRequested.Broadcast(ETrainingFeedbackType::Reignited);
 }
 
 bool UFireManager::HasAnyBurningFire() const
@@ -592,9 +807,17 @@ void UFireManager::RequireEvacuation()
 
 void UFireManager::NotifyPlayerEvacuated()
 {
-	// Reaching the exterior before evacuation is required is not a scenario result.
-	if (!bTrainingWorld || bTrainingFinished ||
-		ScenarioState != EFireScenarioState::EvacuationRequired)
+	if (!bTrainingWorld || bTrainingFinished)
+	{
+		return;
+	}
+
+	const bool bEvacuationWasRequired =
+		ScenarioState == EFireScenarioState::EvacuationRequired;
+	const bool bChoseEarlyEvacuation = IsEvacuationOnlyScenario() &&
+		(ScenarioState == EFireScenarioState::Active ||
+		 ScenarioState == EFireScenarioState::ExtinguishmentMonitoring);
+	if (!bEvacuationWasRequired && !bChoseEarlyEvacuation)
 	{
 		return;
 	}
@@ -610,6 +833,14 @@ void UFireManager::HandleEvacuationTimeout()
 	}
 }
 
+void UFireManager::HandleScenarioTimeout()
+{
+	if (bTrainingWorld && !bTrainingFinished)
+	{
+		FinishTraining(ETrainingOutcome::Failed, ETrainingFailureReason::ScenarioTimeout);
+	}
+}
+
 void UFireManager::FinishTraining(ETrainingOutcome Outcome, ETrainingFailureReason FailureReason)
 {
 	if (!bTrainingWorld || bTrainingFinished)
@@ -621,6 +852,7 @@ void UFireManager::FinishTraining(ETrainingOutcome Outcome, ETrainingFailureReas
 	ScenarioState = EFireScenarioState::Completed;
 	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
 	GetWorldRef().GetTimerManager().ClearTimer(EvacuationGraceTimer);
+	GetWorldRef().GetTimerManager().ClearTimer(ScenarioTimeoutTimer);
 	GetWorldRef().GetTimerManager().ClearTimer(SpreadEvaluationTimer);
 	FTrainingResult Result;
 	Result.Outcome = Outcome;
@@ -641,12 +873,15 @@ void UFireManager::Deinitialize()
 {
 	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
 	GetWorldRef().GetTimerManager().ClearTimer(EvacuationGraceTimer);
+	GetWorldRef().GetTimerManager().ClearTimer(ScenarioTimeoutTimer);
 	ResetSpreadSystem();
+	AnchorFires.Reset();
 	for (TActorIterator<AFireActor> Fire(&GetWorldRef()); Fire; ++Fire)
 	{
 		Fire->OnIntensityChanged.RemoveAll(this);
 	}
 	OnScenarioFeedbackRequested.Clear();
+	OnScenarioStarted.Clear();
 	ActiveScenarioData = nullptr;
 	bTrainingWorld = false;
 	bTrainingFinished = false;

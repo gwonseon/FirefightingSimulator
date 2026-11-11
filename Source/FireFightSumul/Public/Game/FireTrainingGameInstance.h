@@ -28,6 +28,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fire Training|Navigation")
 	void OpenStartMenu();
 
+	UFUNCTION(BlueprintCallable, Category = "Fire Training|Simulation")
+	void SetFireGrowthSpeedMode(EFireGrowthSpeedMode InMode);
+
+	UFUNCTION(BlueprintPure, Category = "Fire Training|Simulation")
+	EFireGrowthSpeedMode GetFireGrowthSpeedMode() const { return FireGrowthSpeedMode; }
+
 	UFUNCTION(BlueprintCallable, Category = "Fire Training|Result")
 	void SetTrainingResult(const FTrainingResult& InResult);
 
@@ -43,6 +49,10 @@ public:
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UFireScenarioDataAsset> SelectedScenario;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire Training|Simulation",
+		meta = (AllowPrivateAccess = "true"))
+	EFireGrowthSpeedMode FireGrowthSpeedMode = EFireGrowthSpeedMode::Training;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Fire Training|Result",
 		meta = (AllowPrivateAccess = "true"))

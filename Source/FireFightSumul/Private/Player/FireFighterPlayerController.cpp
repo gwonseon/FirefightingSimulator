@@ -46,6 +46,10 @@ namespace
 			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Reignited"));
 		case ETrainingFeedbackType::Monitoring:
 			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Monitoring"));
+		case ETrainingFeedbackType::WrongExtinguisher:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.WrongExtinguisher"));
+		case ETrainingFeedbackType::SweepRequired:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.SweepRequired"));
 		default:
 			return FText::GetEmpty();
 		}

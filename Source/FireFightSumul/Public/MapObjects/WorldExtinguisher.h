@@ -10,6 +10,7 @@ class UCameraComponent;
 class UExtinguisherDataAsset;
 class USceneComponent;
 class UStaticMeshComponent;
+enum class EFireClass : uint8;
 
 UCLASS()
 class FIREFIGHTSUMUL_API AWorldExtinguisher : public AMapObject, public IInteractable
@@ -37,6 +38,7 @@ public:
 	float GetMaxEffectiveDistanceCm() const;
 	float GetLowAgentStartRatio() const;
 	float GetRemainingAgentPerformanceFactor() const;
+	bool SupportsFireClass(EFireClass FireClass) const;
 	float ConsumeAgentKg(float RequestedAmountKg);
 
 protected:

@@ -11,6 +11,15 @@ enum class EFireStartSelectionMode : uint8
 };
 
 UENUM(BlueprintType)
+enum class EFireClass : uint8
+{
+	A = 0 UMETA(DisplayName = "Class A - Ordinary Combustibles"),
+	B = 1 UMETA(DisplayName = "Class B - Flammable Liquids"),
+	C = 2 UMETA(DisplayName = "Class C - Energized Electrical"),
+	K = 3 UMETA(DisplayName = "Class K - Cooking Oils and Fats")
+};
+
+UENUM(BlueprintType)
 enum class EFireScenarioState : uint8
 {
 	None = 0 UMETA(DisplayName = "None"),
@@ -73,7 +82,9 @@ enum class ETrainingFeedbackType : uint8
 	EvacuateNow = 8 UMETA(DisplayName = "Evacuate Now"),
 	GoodAim = 9 UMETA(DisplayName = "Good Aim"),
 	Reignited = 10 UMETA(DisplayName = "Reignited"),
-	Monitoring = 11 UMETA(DisplayName = "Monitoring")
+	Monitoring = 11 UMETA(DisplayName = "Monitoring"),
+	WrongExtinguisher = 12 UMETA(DisplayName = "Wrong Extinguisher"),
+	SweepRequired = 13 UMETA(DisplayName = "Sweep Required")
 };
 
 USTRUCT(BlueprintType)
@@ -185,6 +196,9 @@ struct FIREFIGHTSUMUL_API FFireMaterialSetting
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material")
 	FName MaterialTag = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material")
+	EFireClass FireClass = EFireClass::A;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material")
 	bool bCanBurn = true;

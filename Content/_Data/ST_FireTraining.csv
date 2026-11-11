@@ -18,3 +18,5 @@ Key,SourceString
 "Result.FailedDangerZone","불꽃의 직접 위험 구역에 진입했습니다."
 "Result.FailedEvacuation","대피 지시를 따르지 않았습니다."
 "Result.FailedTimeout","제한시간 안에 진압하거나 대피하지 못했습니다."
+"Feedback.WrongExtinguisher","화재 종류에 맞는 소화기를 사용하세요."
+"Feedback.SweepRequired","불의 밑부분을 좌우로 쓸어가며 분사하세요."

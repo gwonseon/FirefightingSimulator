@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "MapObjects/MapObject.h"
+#include "Training/FireTrainingTypes.h"
 #include "FireActor.generated.h"
 
 class UNiagaraComponent;
@@ -19,6 +20,8 @@ public:
 	static const FName AimTag;
 
 	void SetInitialIntensityRatio(float Ratio);
+	void SetFireClass(EFireClass InFireClass) { FireClass = InFireClass; }
+	EFireClass GetFireClass() const { return FireClass; }
 	float GetIntensityRatio() const;
 	double GetLastSuppressionTime() const { return LastSuppressionTime; }
 	void SetAimCollisionEnabled(bool bEnabled);
@@ -46,6 +49,10 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Fire", meta = (ClampMin = "1.0"))
 	float MaxIntensity = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fire|Classification",
+		meta = (AllowPrivateAccess = "true"))
+	EFireClass FireClass = EFireClass::A;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Fire|Recovery", meta = (ClampMin = "0.0", Units = "s"))
 	float RecoveryDelay = 3.0f;

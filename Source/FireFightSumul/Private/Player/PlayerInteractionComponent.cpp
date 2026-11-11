@@ -23,6 +23,11 @@
 
 namespace
 {
+	constexpr uint8 SweepLeftZone = 1 << 0;
+	constexpr uint8 SweepCenterZone = 1 << 1;
+	constexpr uint8 SweepRightZone = 1 << 2;
+	constexpr uint8 SweepAllZones = SweepLeftZone | SweepCenterZone | SweepRightZone;
+
 #if ENABLE_DRAW_DEBUG
 	TAutoConsoleVariable<int32> CVarDrawSpray(
 		TEXT("ffs.DebugSpray"), 1, TEXT("Draw the spray cone and fire collision spheres while spraying."));
@@ -241,6 +246,7 @@ void UPlayerInteractionComponent::EndPrimaryInteract()
 {
 	const bool bWasSpraying = bSpraying;
 	bSpraying = false;
+	SweepTrackingStates.Reset();
 	if (bWasSpraying)
 	{
 		ReportTrainingFeedback(ETrainingFeedbackType::None);
@@ -262,10 +268,12 @@ void UPlayerInteractionComponent::ReportTrainingFeedback(ETrainingFeedbackType T
 }
 
 ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle,
-	const AWorldExtinguisher& Extinguisher, float SuppressionRatio) const
+	const AWorldExtinguisher& Extinguisher, float SuppressionRatio)
 {
 	const FVector Origin = Nozzle.GetComponentLocation();
 	const FVector Forward = Nozzle.GetForwardVector();
+	const FVector Right = Nozzle.GetRightVector();
+	const UExtinguisherDataAsset* Data = Extinguisher.GetExtinguisherData();
 	const double Range = FMath::Max(1.0f, Extinguisher.GetMaxEffectiveDistanceCm());
 	const double MinSafeDistance = FMath::Clamp(
 		static_cast<double>(Extinguisher.GetMinSafeDistanceCm()), 0.0, Range);
@@ -298,6 +306,8 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 		double Score = TNumericLimits<double>::Max();
 		float AngleFraction = 0.0f;
 		float AimHeight01 = 0.0f;
+		bool bCompatible = true;
+		bool bSweepComplete = false;
 	};
 
 	FFeedbackCandidate FeedbackCandidate;
@@ -339,22 +349,37 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 		const double CenterAngle = Depth > 0.0
 			? FMath::Atan2(Radial.Size(), Depth)
 			: UE_PI;
+		const FVector AxisPoint = Origin + Forward * Depth;
+		const float SphereDiameter = FMath::Max(SphereRadius * 2.0f, 1.0f);
+		const float AimHeight01 = FMath::Clamp(
+			(AxisPoint.Z - (SphereLocation.Z - SphereRadius)) / SphereDiameter,
+			0.0f, 1.0f);
+		const float SignedLateralOffset01 = FMath::Clamp(
+			FVector::DotProduct(AxisPoint - SphereLocation, Right) / FMath::Max(SphereRadius, 1.0f),
+			-1.0f, 1.0f);
+		const float CenterAngleFraction = static_cast<float>(CenterAngle / HalfAngle);
+		const bool bCompatible = Extinguisher.SupportsFireClass(Fire->GetFireClass());
+		const bool bValidSweepSample = bCompatible && bIntersectsCone && !bOccluded &&
+			CenterDistance >= MinSafeDistance && CenterDistance <= Range &&
+			AimHeight01 <= FMath::Clamp(SweepBaseAimMaxHeight, 0.05f, 1.0f) &&
+			CenterAngleFraction <= 0.6f;
+		const float SweepCoverage = bValidSweepSample
+			? UpdateSweepCoverage(*Fire, SignedLateralOffset01) : 0.0f;
+		const bool bSweepComplete = SweepCoverage >= 1.0f;
 		if (Depth > 0.0 && CenterDistance <= Range * 2.0 && CenterAngle <= GuidanceHalfAngle)
 		{
 			const double CandidateScore = CenterAngle + CenterDistance / (Range * 1000.0);
 			if (CandidateScore < FeedbackCandidate.Score)
 			{
-				const FVector AxisPoint = Origin + Forward * Depth;
-				const float SphereDiameter = FMath::Max(SphereRadius * 2.0f, 1.0f);
 				FeedbackCandidate.bValid = true;
 				FeedbackCandidate.bIntersectsCone = bIntersectsCone;
 				FeedbackCandidate.bOccluded = bOccluded;
 				FeedbackCandidate.DistanceCm = CenterDistance;
 				FeedbackCandidate.Score = CandidateScore;
-				FeedbackCandidate.AngleFraction = static_cast<float>(CenterAngle / HalfAngle);
-				FeedbackCandidate.AimHeight01 = FMath::Clamp(
-					(AxisPoint.Z - (SphereLocation.Z - SphereRadius)) / SphereDiameter,
-					0.0f, 1.0f);
+				FeedbackCandidate.AngleFraction = CenterAngleFraction;
+				FeedbackCandidate.AimHeight01 = AimHeight01;
+				FeedbackCandidate.bCompatible = bCompatible;
+				FeedbackCandidate.bSweepComplete = bSweepComplete;
 			}
 		}
 
@@ -375,7 +400,6 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 		const float AngleFraction = static_cast<float>(
 			FMath::Clamp(FMath::Atan2(Contact.Y, Contact.X) / HalfAngle, 0.0, 1.0));
 		const float DistanceFraction = static_cast<float>(FMath::Clamp(Contact.X / Range, 0.0, 1.0));
-		const UExtinguisherDataAsset* Data = Extinguisher.GetExtinguisherData();
 		const float AngleFactor = Data && Data->ConeCenterCurve
 			? FMath::Clamp(Data->ConeCenterCurve->GetFloatValue(AngleFraction), 0.0f, 1.0f)
 			: FMath::Lerp(1.0f, 0.15f, AngleFraction);
@@ -393,7 +417,16 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 			DistanceFactor = FMath::Lerp(1.0f, 0.2f, FalloffFraction);
 		}
 
-		Fire->ApplySuppressionRatio(SuppressionRatio * AngleFactor * DistanceFactor);
+		if (bCompatible)
+		{
+			const float AimHeightFactor = Data && Data->AimHeightCurve
+				? FMath::Clamp(Data->AimHeightCurve->GetFloatValue(AimHeight01), 0.0f, 1.0f)
+				: FMath::Lerp(1.0f, 0.1f, AimHeight01);
+			const float MinimumSweepFactor = FMath::Clamp(MinimumSweepSuppressionFactor, 0.0f, 1.0f);
+			const float SweepFactor = FMath::Lerp(MinimumSweepFactor, 1.0f, SweepCoverage);
+			Fire->ApplySuppressionRatio(
+				SuppressionRatio * AngleFactor * DistanceFactor * AimHeightFactor * SweepFactor);
+		}
 	}
 
 	if (!FeedbackCandidate.bValid)
@@ -416,7 +449,11 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 	{
 		return ETrainingFeedbackType::OffCenter;
 	}
-	if (FeedbackCandidate.AimHeight01 > 0.45f)
+	if (!FeedbackCandidate.bCompatible)
+	{
+		return ETrainingFeedbackType::WrongExtinguisher;
+	}
+	if (FeedbackCandidate.AimHeight01 > FMath::Clamp(SweepBaseAimMaxHeight, 0.05f, 1.0f))
 	{
 		return ETrainingFeedbackType::AimTooHigh;
 	}
@@ -424,7 +461,53 @@ ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneCompon
 	{
 		return ETrainingFeedbackType::OffCenter;
 	}
+	if (!FeedbackCandidate.bSweepComplete)
+	{
+		return ETrainingFeedbackType::SweepRequired;
+	}
 	return ETrainingFeedbackType::GoodAim;
+}
+
+float UPlayerInteractionComponent::UpdateSweepCoverage(AFireActor& Fire, float SignedLateralOffset01)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0.0f;
+	}
+
+	FSweepTrackingState& State = SweepTrackingStates.FindOrAdd(&Fire);
+	const double Now = World->GetTimeSeconds();
+	const double CompletionWindow = FMath::Max(0.1f, SweepCompletionWindowSeconds);
+	if (State.SweepStartedTime >= 0.0 && State.CoveredZoneMask != SweepAllZones &&
+		Now - State.SweepStartedTime > CompletionWindow)
+	{
+		State.CoveredZoneMask = 0;
+		State.SweepStartedTime = -1.0;
+	}
+	if (State.SweepStartedTime < 0.0)
+	{
+		State.SweepStartedTime = Now;
+	}
+
+	const float SideThreshold = FMath::Clamp(SweepSideZoneThreshold, 0.05f, 0.9f);
+	if (SignedLateralOffset01 <= -SideThreshold)
+	{
+		State.CoveredZoneMask |= SweepLeftZone;
+	}
+	else if (SignedLateralOffset01 >= SideThreshold)
+	{
+		State.CoveredZoneMask |= SweepRightZone;
+	}
+	else
+	{
+		State.CoveredZoneMask |= SweepCenterZone;
+	}
+	const int32 CoveredZoneCount =
+		((State.CoveredZoneMask & SweepLeftZone) != 0 ? 1 : 0) +
+		((State.CoveredZoneMask & SweepCenterZone) != 0 ? 1 : 0) +
+		((State.CoveredZoneMask & SweepRightZone) != 0 ? 1 : 0);
+	return State.CoveredZoneMask == SweepAllZones ? 1.0f : CoveredZoneCount / 3.0f;
 }
 
 AActor* UPlayerInteractionComponent::FindAimedActor() const

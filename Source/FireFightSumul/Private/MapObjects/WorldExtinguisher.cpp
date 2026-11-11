@@ -210,6 +210,17 @@ float AWorldExtinguisher::GetRemainingAgentPerformanceFactor() const
 	return CurveFactor * LowAgentFalloff;
 }
 
+bool AWorldExtinguisher::SupportsFireClass(EFireClass FireClass) const
+{
+	if (ExtinguisherData)
+	{
+		return ExtinguisherData->SupportsFireClass(FireClass);
+	}
+
+	// The built-in fallback represents the same 3.3 kg ABC dry-chemical extinguisher.
+	return FireClass == EFireClass::A || FireClass == EFireClass::B || FireClass == EFireClass::C;
+}
+
 float AWorldExtinguisher::ConsumeAgentKg(float RequestedAmountKg)
 {
 	const float UsedAmountKg = FMath::Clamp(RequestedAmountKg, 0.0f, RemainingAgentKg);

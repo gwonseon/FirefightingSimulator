@@ -46,9 +46,11 @@ private:
 	void EvaluateFireSpread();
 	void ResetSpreadSystem();
 	bool HasClearHeatPath(const AFireActor& SourceFire, const AFireSpreadAnchor& TargetAnchor) const;
-	bool IgniteLocation(const FVector& Location, float InitialIntensityRatio);
+	bool IgniteLocation(const FVector& Location, float InitialIntensityRatio, FName MaterialTag);
 	void CheckEvacuationThreshold(const AFireSpreadAnchor& IgnitedAnchor);
 	const FFireMaterialSetting* FindMaterialSetting(FName MaterialTag) const;
+	EFireClass ResolveFireClass(FName MaterialTag) const;
+	AFireSpreadAnchor* FindClosestSpreadAnchor(const FVector& Location, float MaxDistanceCm) const;
 	bool HasAnyBurningFire() const;
 	void FinishTraining(ETrainingOutcome Outcome,
 		ETrainingFailureReason FailureReason = ETrainingFailureReason::None);

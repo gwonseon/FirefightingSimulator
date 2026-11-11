@@ -34,6 +34,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rating")
 	bool bSupportsClassC = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rating")
+	bool bSupportsClassK = false;
+
+	UFUNCTION(BlueprintPure, Category = "Extinguisher|Rating")
+	bool SupportsFireClass(EFireClass FireClass) const
+	{
+		switch (FireClass)
+		{
+		case EFireClass::A:
+			return ARating > 0;
+		case EFireClass::B:
+			return BRating > 0;
+		case EFireClass::C:
+			return bSupportsClassC;
+		case EFireClass::K:
+			return bSupportsClassK;
+		default:
+			return false;
+		}
+	}
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Performance", meta = (ClampMin = "0.1", Units = "s"))
 	float DischargeDurationSeconds = 12.0f;
 

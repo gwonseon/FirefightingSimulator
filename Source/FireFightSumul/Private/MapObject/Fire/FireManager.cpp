@@ -10,6 +10,11 @@
 #include "TimerManager.h"
 #include "UI/TrainingResultGameMode.h"
 
+namespace
+{
+	constexpr float InitialAnchorMatchDistanceCm = 100.0f;
+}
+
 void UFireManager::ToggleFireCollision()
 {
 	bFireCollisionEnabled = !bFireCollisionEnabled;
@@ -135,10 +140,21 @@ ATargetPoint* UFireManager::SelectStartPoint(const UFireScenarioDataAsset& Scena
 
 bool UFireManager::IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio)
 {
-	return IgniteLocation(Point.GetActorLocation(), InitialIntensityRatio);
+	const AFireSpreadAnchor* InitialAnchor = FindClosestSpreadAnchor(
+		Point.GetActorLocation(), InitialAnchorMatchDistanceCm);
+	const FName MaterialTag = InitialAnchor ? InitialAnchor->GetMaterialTag() : NAME_None;
+
+	if (!InitialAnchor)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("Initial fire point '%s' has no FireSpreadAnchor within %.0fcm. Using Class A."),
+			*GetNameSafe(&Point), InitialAnchorMatchDistanceCm);
+	}
+
+	return IgniteLocation(Point.GetActorLocation(), InitialIntensityRatio, MaterialTag);
 }
 
-bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensityRatio)
+bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensityRatio, FName MaterialTag)
 {
 	const FTransform Transform(FQuat::Identity, Location);
 	AFireActor* Fire = GetWorldRef().SpawnActorDeferred<AFireActor>(AFireActor::StaticClass(), Transform);
@@ -148,6 +164,7 @@ bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensit
 	}
 
 	Fire->SetInitialIntensityRatio(InitialIntensityRatio);
+	Fire->SetFireClass(ResolveFireClass(MaterialTag));
 	Fire->FinishSpawning(Transform);
 	RegisterFire(*Fire);
 	return true;
@@ -167,20 +184,11 @@ void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation)
 		return;
 	}
 
-	AFireSpreadAnchor* ClosestInitialAnchor = nullptr;
-	float ClosestDistanceSquared = TNumericLimits<float>::Max();
 	TSet<FName> MissingMaterialTags;
 	for (TActorIterator<AFireSpreadAnchor> Anchor(&GetWorldRef()); Anchor; ++Anchor)
 	{
 		Anchor->ResetSpreadState();
 		SpreadAnchors.Add(*Anchor);
-
-		const float DistanceSquared = FVector::DistSquared(InitialLocation, Anchor->GetActorLocation());
-		if (DistanceSquared < ClosestDistanceSquared)
-		{
-			ClosestDistanceSquared = DistanceSquared;
-			ClosestInitialAnchor = *Anchor;
-		}
 
 		if (!Anchor->GetMaterialTag().IsNone() && !FindMaterialSetting(Anchor->GetMaterialTag()))
 		{
@@ -195,8 +203,8 @@ void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation)
 			*MissingTag.ToString());
 	}
 
-	constexpr float InitialAnchorMatchDistanceCm = 100.0f;
-	if (ClosestInitialAnchor && ClosestDistanceSquared <= FMath::Square(InitialAnchorMatchDistanceCm))
+	if (AFireSpreadAnchor* ClosestInitialAnchor = FindClosestSpreadAnchor(
+		InitialLocation, InitialAnchorMatchDistanceCm))
 	{
 		// This represents the object on which the Target Point already created the initial fire.
 		ClosestInitialAnchor->MarkIgnited();
@@ -285,7 +293,7 @@ void UFireManager::EvaluateFireSpread()
 			continue;
 		}
 
-		if (IgniteLocation(Anchor->GetActorLocation(), NewFireIntensity))
+		if (IgniteLocation(Anchor->GetActorLocation(), NewFireIntensity, Anchor->GetMaterialTag()))
 		{
 			Anchor->MarkIgnited();
 			++SpreadIgnitionCount;
@@ -340,6 +348,38 @@ const FFireMaterialSetting* UFireManager::FindMaterialSetting(FName MaterialTag)
 		{
 			return Setting.MaterialTag == MaterialTag;
 		});
+}
+
+EFireClass UFireManager::ResolveFireClass(FName MaterialTag) const
+{
+	if (const FFireMaterialSetting* Material = FindMaterialSetting(MaterialTag))
+	{
+		return Material->FireClass;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("Fire MaterialTag '%s' has no matching material setting. Using Class A."),
+		MaterialTag.IsNone() ? TEXT("None") : *MaterialTag.ToString());
+	return EFireClass::A;
+}
+
+AFireSpreadAnchor* UFireManager::FindClosestSpreadAnchor(
+	const FVector& Location, float MaxDistanceCm) const
+{
+	AFireSpreadAnchor* ClosestAnchor = nullptr;
+	float ClosestDistanceSquared = FMath::Square(FMath::Max(0.0f, MaxDistanceCm));
+
+	for (TActorIterator<AFireSpreadAnchor> Anchor(&GetWorldRef()); Anchor; ++Anchor)
+	{
+		const float DistanceSquared = FVector::DistSquared(Location, Anchor->GetActorLocation());
+		if (DistanceSquared <= ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			ClosestAnchor = *Anchor;
+		}
+	}
+
+	return ClosestAnchor;
 }
 
 void UFireManager::ResetSpreadSystem()

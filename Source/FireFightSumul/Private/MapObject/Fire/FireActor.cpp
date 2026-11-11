@@ -4,7 +4,6 @@
 #include "Components/SphereComponent.h"
 #include "Engine/World.h"
 #include "MapObject/Fire/FireManager.h"
-#include "MapObject/Fire/FireManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "UObject/ConstructorHelpers.h"
@@ -84,6 +83,16 @@ void AFireActor::ApplySuppression(float Amount)
 	{
 		SetActorTickEnabled(true);
 	}
+}
+
+void AFireActor::ApplySuppressionRatio(float RatioAmount)
+{
+	if (!FMath::IsFinite(RatioAmount) || RatioAmount <= 0.0f)
+	{
+		return;
+	}
+
+	ApplySuppression(FMath::Max(MaxIntensity, 1.0f) * RatioAmount);
 }
 
 void AFireActor::Tick(float DeltaSeconds)

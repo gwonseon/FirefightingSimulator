@@ -1,24 +1,14 @@
 #include "MapObject/Fire/FireManager.h"
 
-#include "CollisionQueryParams.h"
+#include "Data/FireScenarioDataAsset.h"
+#include "Data/FireSimulationDataAsset.h"
 #include "Engine/TargetPoint.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "Kismet/GameplayStatics.h"
 #include "MapObject/Fire/FireActor.h"
+#include "MapObject/Fire/FireSpreadAnchor.h"
 #include "TimerManager.h"
 #include "UI/TrainingResultGameMode.h"
-
-namespace
-{
-	const FName SpreadTag(TEXT("spread"));
-	constexpr float SpreadIntensityThreshold = 0.5f;
-	constexpr double SpreadDelay = 5.0;
-	constexpr double FullIntensitySpreadDelay = 3.5;
-	constexpr double SpreadDistance = 250.0;
-	constexpr double SpreadHeightTolerance = 25.0;
-	constexpr float SpreadInitialIntensity = 0.3f;
-}
 
 void UFireManager::ToggleFireCollision()
 {
@@ -34,100 +24,123 @@ void UFireManager::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
 
-	if (!InWorld.IsGameWorld() || UGameplayStatics::GetCurrentLevelName(&InWorld) != TEXT("Main"))
+	bTrainingWorld = false;
+	bTrainingFinished = false;
+	bScenarioStarted = false;
+	ScenarioState = EFireScenarioState::None;
+	ActiveScenarioData = nullptr;
+}
+
+bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
+{
+	if (!InScenarioData || !GetWorldRef().IsGameWorld())
 	{
-		return;
+		return false;
 	}
+
+	if (bScenarioStarted)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("Scenario '%s' is already active. Ignoring a second start request for '%s'."),
+			*GetNameSafe(ActiveScenarioData), *GetNameSafe(InScenarioData));
+		return false;
+	}
+
+	ATargetPoint* StartPoint = SelectStartPoint(*InScenarioData);
+	if (!StartPoint)
+	{
+		return false;
+	}
+
+	ActiveScenarioData = InScenarioData;
 	bTrainingWorld = true;
+	bTrainingFinished = false;
+	bScenarioStarted = true;
+	ScenarioState = EFireScenarioState::Ready;
 
-	for (TActorIterator<ATargetPoint> Point(&InWorld); Point; ++Point)
+	const float InitialIntensity = FMath::Clamp(InScenarioData->InitialFireIntensityRatio, 0.01f, 1.0f);
+	if (!IgnitePoint(*StartPoint, InitialIntensity))
 	{
-		if (Point->ActorHasTag(SpreadTag))
-		{
-			UnusedSpreadPoints.Add(*Point);
-		}
-		else
-		{
-			UnusedIgnitionPoints.Add(*Point);
-		}
+		UE_LOG(LogTemp, Error, TEXT("Scenario '%s' could not spawn its initial fire at '%s'."),
+			*InScenarioData->ScenarioId.ToString(), *GetNameSafe(StartPoint));
+		ActiveScenarioData = nullptr;
+		bTrainingWorld = false;
+		bScenarioStarted = false;
+		ScenarioState = EFireScenarioState::None;
+		return false;
 	}
 
-	IgniteRandomPoints(1);
-	if (!UnusedIgnitionPoints.IsEmpty())
-	{
-		constexpr float IgnitionInterval = 10.0f;
-		InWorld.GetTimerManager().SetTimer(IgnitionTimer,
-			FTimerDelegate::CreateUObject(this, &UFireManager::IgniteRandomPoints, 2),
-			IgnitionInterval, true);
-	}
-	if (!UnusedSpreadPoints.IsEmpty())
-	{
-		constexpr float SpreadCheckInterval = 0.25f;
-		InWorld.GetTimerManager().SetTimer(SpreadTimer, this, &UFireManager::SpreadFires,
-			SpreadCheckInterval, true);
-	}
+	ScenarioState = EFireScenarioState::Active;
+	InitializeSpreadSystem(StartPoint->GetActorLocation());
+
+	UE_LOG(LogTemp, Log, TEXT("Started fire scenario '%s' at TargetPoint '%s' (Tag=%s, Mode=%s)."),
+		*InScenarioData->ScenarioId.ToString(), *GetNameSafe(StartPoint),
+		*InScenarioData->StartPointTag.ToString(),
+		InScenarioData->StartSelectionMode == EFireStartSelectionMode::Random
+			? TEXT("Random") : TEXT("Fixed"));
+	return true;
 }
 
-void UFireManager::NotifyFireExtinguished()
+ATargetPoint* UFireManager::SelectStartPoint(const UFireScenarioDataAsset& ScenarioData) const
 {
-	if (!bTrainingWorld || bTrainingFinished)
+	if (ScenarioData.StartPointTag.IsNone())
 	{
-		return;
+		UE_LOG(LogTemp, Error, TEXT("Scenario '%s' has no StartPointTag."),
+			*ScenarioData.ScenarioId.ToString());
+		return nullptr;
 	}
 
-	for (TActorIterator<AFireActor> Fire(&GetWorldRef()); Fire; ++Fire)
+	TArray<ATargetPoint*> Candidates;
+	for (TActorIterator<ATargetPoint> Point(&GetWorldRef()); Point; ++Point)
 	{
-		if (Fire->GetIntensityRatio() > 0.0f)
+		if (Point->ActorHasTag(ScenarioData.StartPointTag))
 		{
-			return;
-		}
-	}
-
-	FinishTraining(true);
-}
-
-void UFireManager::NotifyExtinguisherDepleted()
-{
-	FinishTraining(false);
-}
-
-void UFireManager::FinishTraining(bool bSuccess)
-{
-	if (!bTrainingWorld || bTrainingFinished)
-	{
-		return;
-	}
-
-	bTrainingFinished = true;
-	FTimerManager& Timers = GetWorldRef().GetTimerManager();
-	Timers.ClearTimer(IgnitionTimer);
-	Timers.ClearTimer(SpreadTimer);
-	ATrainingResultGameMode::OpenResultLevel(&GetWorldRef(), bSuccess);
-}
-
-void UFireManager::IgniteRandomPoints(int32 Count)
-{
-	while (Count > 0 && !UnusedIgnitionPoints.IsEmpty())
-	{
-		const int32 Index = FMath::RandHelper(UnusedIgnitionPoints.Num());
-		ATargetPoint* Point = UnusedIgnitionPoints[Index].Get();
-		UnusedIgnitionPoints.RemoveAtSwap(Index, 1, EAllowShrinking::No);
-
-		if (Point && IgnitePoint(*Point, 1.0f))
-		{
-			--Count;
+			Candidates.Add(*Point);
 		}
 	}
 
-	if (UnusedIgnitionPoints.IsEmpty())
+	if (Candidates.IsEmpty())
 	{
-		GetWorldRef().GetTimerManager().ClearTimer(IgnitionTimer);
+		UE_LOG(LogTemp, Error,
+			TEXT("Scenario '%s' found no TargetPoint with Actor Tag '%s'."),
+			*ScenarioData.ScenarioId.ToString(), *ScenarioData.StartPointTag.ToString());
+		return nullptr;
 	}
+
+	if (ScenarioData.StartSelectionMode == EFireStartSelectionMode::Random)
+	{
+		return Candidates[FMath::RandHelper(Candidates.Num())];
+	}
+
+	ATargetPoint* SelectedPoint = Candidates[0];
+	for (ATargetPoint* Candidate : Candidates)
+	{
+		if (Candidate && Candidate->GetName().Compare(SelectedPoint->GetName(),
+			ESearchCase::IgnoreCase) < 0)
+		{
+			SelectedPoint = Candidate;
+		}
+	}
+
+	if (Candidates.Num() > 1)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("Fixed scenario '%s' found %d TargetPoints tagged '%s'. Using '%s'. Leave only one for a fixed start."),
+			*ScenarioData.ScenarioId.ToString(), Candidates.Num(),
+			*ScenarioData.StartPointTag.ToString(), *GetNameSafe(SelectedPoint));
+	}
+
+	return SelectedPoint;
 }
 
 bool UFireManager::IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio)
 {
-	const FTransform Transform(FQuat::Identity, Point.GetActorLocation());
+	return IgniteLocation(Point.GetActorLocation(), InitialIntensityRatio);
+}
+
+bool UFireManager::IgniteLocation(const FVector& Location, float InitialIntensityRatio)
+{
+	const FTransform Transform(FQuat::Identity, Location);
 	AFireActor* Fire = GetWorldRef().SpawnActorDeferred<AFireActor>(AFireActor::StaticClass(), Transform);
 	if (!Fire)
 	{
@@ -135,110 +148,385 @@ bool UFireManager::IgnitePoint(const ATargetPoint& Point, float InitialIntensity
 	}
 
 	Fire->SetInitialIntensityRatio(InitialIntensityRatio);
-	if (!UnusedSpreadPoints.IsEmpty())
-	{
-		Fire->OnIntensityChanged.AddUObject(this, &UFireManager::UpdateSpreadReadiness,
-			TWeakObjectPtr<AFireActor>(Fire));
-	}
 	Fire->FinishSpawning(Transform);
+	RegisterFire(*Fire);
 	return true;
 }
 
-void UFireManager::UpdateSpreadReadiness(float IntensityRatio, TWeakObjectPtr<AFireActor> Source)
+void UFireManager::InitializeSpreadSystem(const FVector& InitialLocation)
 {
-	if (IntensityRatio <= SpreadIntensityThreshold)
+	ResetSpreadSystem();
+	InitialFireLocation = InitialLocation;
+
+	const UFireSimulationDataAsset* FireRules = ActiveScenarioData
+		? ActiveScenarioData->FireRules.Get() : nullptr;
+	if (!FireRules)
 	{
-		SpreadWaitStartTimes.Remove(Source);
+		UE_LOG(LogTemp, Warning, TEXT("Scenario '%s' has no FireRules. Fire spread is disabled."),
+			*GetNameSafe(ActiveScenarioData));
+		return;
 	}
-	else if (!UnusedSpreadPoints.IsEmpty() && !SpreadWaitStartTimes.Contains(Source))
+
+	AFireSpreadAnchor* ClosestInitialAnchor = nullptr;
+	float ClosestDistanceSquared = TNumericLimits<float>::Max();
+	TSet<FName> MissingMaterialTags;
+	for (TActorIterator<AFireSpreadAnchor> Anchor(&GetWorldRef()); Anchor; ++Anchor)
 	{
-		SpreadWaitStartTimes.Add(Source, GetWorldRef().GetTimeSeconds());
+		Anchor->ResetSpreadState();
+		SpreadAnchors.Add(*Anchor);
+
+		const float DistanceSquared = FVector::DistSquared(InitialLocation, Anchor->GetActorLocation());
+		if (DistanceSquared < ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			ClosestInitialAnchor = *Anchor;
+		}
+
+		if (!Anchor->GetMaterialTag().IsNone() && !FindMaterialSetting(Anchor->GetMaterialTag()))
+		{
+			MissingMaterialTags.Add(Anchor->GetMaterialTag());
+		}
+	}
+
+	for (const FName MissingTag : MissingMaterialTags)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("Fire spread MaterialTag '%s' has no matching entry in FireRules.MaterialSettings. Using fallback values."),
+			*MissingTag.ToString());
+	}
+
+	constexpr float InitialAnchorMatchDistanceCm = 100.0f;
+	if (ClosestInitialAnchor && ClosestDistanceSquared <= FMath::Square(InitialAnchorMatchDistanceCm))
+	{
+		// This represents the object on which the Target Point already created the initial fire.
+		ClosestInitialAnchor->MarkIgnited();
+	}
+
+	if (SpreadAnchors.IsEmpty())
+	{
+		UE_LOG(LogTemp, Log, TEXT("No FireSpreadAnchor actors found. Fire spread is disabled for this level."));
+		return;
+	}
+
+	const float CheckInterval = FMath::Max(0.05f, FireRules->SpreadCheckInterval);
+	GetWorldRef().GetTimerManager().SetTimer(SpreadEvaluationTimer, this,
+		&UFireManager::EvaluateFireSpread, CheckInterval, true, CheckInterval);
+	UE_LOG(LogTemp, Log, TEXT("Fire spread started with %d anchors (interval %.2fs, range %.0fcm)."),
+		SpreadAnchors.Num(), CheckInterval, FireRules->SpreadDistanceCm);
+}
+
+void UFireManager::EvaluateFireSpread()
+{
+	if (!bTrainingWorld || bTrainingFinished || !ActiveScenarioData)
+	{
+		return;
+	}
+
+	const UFireSimulationDataAsset* FireRules = ActiveScenarioData->FireRules.Get();
+	if (!FireRules)
+	{
+		return;
+	}
+
+	TArray<AFireActor*> BurningFires;
+	for (TActorIterator<AFireActor> Fire(&GetWorldRef()); Fire; ++Fire)
+	{
+		if (Fire->GetIntensityRatio() > 0.0f)
+		{
+			BurningFires.Add(*Fire);
+		}
+	}
+
+	const float CheckInterval = FMath::Max(0.05f, FireRules->SpreadCheckInterval);
+	const float SpreadDistance = FMath::Max(1.0f, FireRules->SpreadDistanceCm);
+	const float HeatPerSecond = FMath::Max(0.0f, FireRules->SpreadHeatPerSecond);
+	const float CoolingPerSecond = FMath::Max(0.0f, FireRules->SpreadCoolingPerSecond);
+	const float NewFireIntensity = FMath::Clamp(
+		FireRules->SpreadFireInitialIntensityRatio, 0.01f, 1.0f);
+
+	for (const TWeakObjectPtr<AFireSpreadAnchor>& WeakAnchor : SpreadAnchors)
+	{
+		AFireSpreadAnchor* Anchor = WeakAnchor.Get();
+		if (!Anchor || Anchor->IsIgnited() || !Anchor->CanIgnite() ||
+			Anchor->GetMaterialTag().IsNone())
+		{
+			continue;
+		}
+
+		const FFireMaterialSetting* Material = FindMaterialSetting(Anchor->GetMaterialTag());
+		if (Material && !Material->bCanBurn)
+		{
+			continue;
+		}
+
+		float Exposure = 0.0f;
+		for (const AFireActor* Fire : BurningFires)
+		{
+			const float Distance = FVector::Distance(Fire->GetActorLocation(), Anchor->GetActorLocation());
+			if (Distance >= SpreadDistance || !HasClearHeatPath(*Fire, *Anchor))
+			{
+				continue;
+			}
+
+			const float DistanceFactor = 1.0f - Distance / SpreadDistance;
+			Exposure += Fire->GetIntensityRatio() * DistanceFactor;
+		}
+
+		const float HeatReceiveMultiplier = Material
+			? FMath::Max(0.0f, Material->HeatReceiveMultiplier) : 1.0f;
+		const float HeatGain = Exposure * HeatPerSecond * HeatReceiveMultiplier * CheckInterval;
+		const float HeatLoss = Exposure > 0.0f ? 0.0f : CoolingPerSecond * CheckInterval;
+		Anchor->AddHeat(HeatGain - HeatLoss);
+
+		const float IgnitionThreshold = Material
+			? FMath::Max(UE_KINDA_SMALL_NUMBER, Material->IgnitionThreshold) : 1.0f;
+		if (Anchor->GetAccumulatedHeat() < IgnitionThreshold)
+		{
+			continue;
+		}
+
+		if (IgniteLocation(Anchor->GetActorLocation(), NewFireIntensity))
+		{
+			Anchor->MarkIgnited();
+			++SpreadIgnitionCount;
+			UE_LOG(LogTemp, Warning,
+				TEXT("Fire spread ignited anchor '%s' (Material=%s, SpreadCount=%d)."),
+				*GetNameSafe(Anchor), *Anchor->GetMaterialTag().ToString(), SpreadIgnitionCount);
+			CheckEvacuationThreshold(*Anchor);
+		}
 	}
 }
 
-void UFireManager::SpreadFires()
+bool UFireManager::HasClearHeatPath(const AFireActor& SourceFire,
+	const AFireSpreadAnchor& TargetAnchor) const
 {
-	const double Now = GetWorldRef().GetTimeSeconds();
-	TArray<TWeakObjectPtr<AFireActor>> ReadySources;
-	for (auto It = SpreadWaitStartTimes.CreateIterator(); It; ++It)
-	{
-		const AFireActor* Fire = It.Key().Get();
-		if (!Fire)
-		{
-			It.RemoveCurrent();
-			continue;
-		}
+	const FVector Start = SourceFire.GetActorLocation() + FVector(0.0f, 0.0f, 30.0f);
+	const FVector End = TargetAnchor.GetActorLocation() + FVector(0.0f, 0.0f, 20.0f);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(FireSpreadOcclusion), false);
+	QueryParams.AddIgnoredActor(&SourceFire);
+	QueryParams.AddIgnoredActor(&TargetAnchor);
+	return !GetWorldRef().LineTraceTestByChannel(Start, End, ECC_Visibility, QueryParams);
+}
 
-		const double RequiredWait = Fire->GetIntensityRatio() >= 1.0f ? FullIntensitySpreadDelay : SpreadDelay;
-		const double WaitStartTime = FMath::Max(It.Value(), Fire->GetLastSuppressionTime());
-		if (Now - WaitStartTime >= RequiredWait)
-		{
-			ReadySources.Add(It.Key());
-		}
+void UFireManager::CheckEvacuationThreshold(const AFireSpreadAnchor& IgnitedAnchor)
+{
+	if (!ActiveScenarioData || ScenarioState == EFireScenarioState::EvacuationRequired)
+	{
+		return;
 	}
 
-	for (const TWeakObjectPtr<AFireActor>& Source : ReadySources)
+	const int32 FireCountLimit = FMath::Max(1, ActiveScenarioData->UncontrollableFireCount);
+	const float DistanceLimit = FMath::Max(0.0f, ActiveScenarioData->EvacuationSpreadDistanceCm);
+	const float SpreadDistance = FVector::Distance(
+		InitialFireLocation, IgnitedAnchor.GetActorLocation());
+	if (SpreadIgnitionCount >= FireCountLimit ||
+		(DistanceLimit > 0.0f && SpreadDistance >= DistanceLimit))
 	{
-		if (AFireActor* Fire = Source.Get(); Fire && TrySpreadFrom(*Fire))
-		{
-			SpreadWaitStartTimes.Add(Source, Now);
-		}
-	}
-
-	if (UnusedSpreadPoints.IsEmpty())
-	{
-		GetWorldRef().GetTimerManager().ClearTimer(SpreadTimer);
-		SpreadWaitStartTimes.Reset();
+		RequireEvacuation();
 	}
 }
 
-bool UFireManager::TrySpreadFrom(AFireActor& Source)
+const FFireMaterialSetting* UFireManager::FindMaterialSetting(FName MaterialTag) const
 {
-	const FVector SourceLocation = Source.GetActorLocation();
-	const FVector TraceOffset(0.0, 0.0, 50.0);
-	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(FireSpread), false, &Source);
-	int32 BestIndex = INDEX_NONE;
-	double BestDistanceSquared = FMath::Square(SpreadDistance);
-
-	for (int32 Index = 0; Index < UnusedSpreadPoints.Num(); ++Index)
+	const UFireSimulationDataAsset* FireRules = ActiveScenarioData
+		? ActiveScenarioData->FireRules.Get() : nullptr;
+	if (!FireRules)
 	{
-		const ATargetPoint* Point = UnusedSpreadPoints[Index].Get();
-		if (!Point)
-		{
-			continue;
-		}
-
-		const FVector Location = Point->GetActorLocation();
-		const FVector Offset = Location - SourceLocation;
-		const double DistanceSquared = Offset.SizeSquared2D();
-		if (FMath::Abs(Offset.Z) > SpreadHeightTolerance || DistanceSquared <= 1.0 ||
-			DistanceSquared > BestDistanceSquared)
-		{
-			continue;
-		}
-
-		if (!GetWorldRef().LineTraceTestByChannel(SourceLocation + TraceOffset, Location + TraceOffset,
-			ECC_Visibility, QueryParams))
-		{
-			BestIndex = Index;
-			BestDistanceSquared = DistanceSquared;
-		}
+		return nullptr;
 	}
 
-	if (BestIndex != INDEX_NONE && IgnitePoint(*UnusedSpreadPoints[BestIndex].Get(), SpreadInitialIntensity))
+	return FireRules->MaterialSettings.FindByPredicate(
+		[MaterialTag](const FFireMaterialSetting& Setting)
+		{
+			return Setting.MaterialTag == MaterialTag;
+		});
+}
+
+void UFireManager::ResetSpreadSystem()
+{
+	GetWorldRef().GetTimerManager().ClearTimer(SpreadEvaluationTimer);
+	SpreadAnchors.Reset();
+	SpreadIgnitionCount = 0;
+	InitialFireLocation = FVector::ZeroVector;
+}
+
+void UFireManager::RegisterFire(AFireActor& Fire)
+{
+	Fire.OnIntensityChanged.RemoveAll(this);
+	Fire.OnIntensityChanged.AddUObject(this, &UFireManager::HandleTrackedFireIntensityChanged);
+
+	// A spread fire can be registered while the five-second observation is running.
+	HandleTrackedFireIntensityChanged(Fire.GetIntensityRatio());
+}
+
+void UFireManager::NotifyFireExtinguished()
+{
+	if (!bTrainingWorld || bTrainingFinished ||
+		ScenarioState == EFireScenarioState::EvacuationRequired)
 	{
-		UnusedSpreadPoints.RemoveAtSwap(BestIndex, 1, EAllowShrinking::No);
-		return true;
+		return;
 	}
 
+	if (!HasAnyBurningFire())
+	{
+		BeginExtinguishmentMonitoring();
+	}
+}
+
+bool UFireManager::HasAnyBurningFire() const
+{
+	for (TActorIterator<AFireActor> Fire(&GetWorldRef()); Fire; ++Fire)
+	{
+		if (Fire->GetIntensityRatio() > 0.0f)
+		{
+			return true;
+		}
+	}
 	return false;
+}
+
+void UFireManager::BeginExtinguishmentMonitoring()
+{
+	if (ScenarioState == EFireScenarioState::ExtinguishmentMonitoring ||
+		ScenarioState == EFireScenarioState::Completed)
+	{
+		return;
+	}
+
+	ScenarioState = EFireScenarioState::ExtinguishmentMonitoring;
+	OnScenarioFeedbackRequested.Broadcast(ETrainingFeedbackType::Monitoring);
+
+	const float ObservationSeconds = ActiveScenarioData
+		? FMath::Max(0.0f, ActiveScenarioData->ExtinguishmentObservationSeconds) : 5.0f;
+	if (ObservationSeconds <= 0.0f)
+	{
+		CompleteExtinguishmentObservation();
+		return;
+	}
+
+	GetWorldRef().GetTimerManager().SetTimer(ExtinguishmentObservationTimer, this,
+		&UFireManager::CompleteExtinguishmentObservation, ObservationSeconds, false);
+	UE_LOG(LogTemp, Log, TEXT("All fires are out. Monitoring for %.1f seconds."), ObservationSeconds);
+}
+
+void UFireManager::CompleteExtinguishmentObservation()
+{
+	if (bTrainingFinished || ScenarioState != EFireScenarioState::ExtinguishmentMonitoring)
+	{
+		return;
+	}
+
+	if (HasAnyBurningFire())
+	{
+		CancelExtinguishmentMonitoring(true);
+		return;
+	}
+
+	FinishTraining(ETrainingOutcome::Extinguished);
+}
+
+void UFireManager::CancelExtinguishmentMonitoring(bool bShowReignitionFeedback)
+{
+	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
+	if (ScenarioState == EFireScenarioState::ExtinguishmentMonitoring)
+	{
+		ScenarioState = EFireScenarioState::Active;
+		if (bShowReignitionFeedback)
+		{
+			OnScenarioFeedbackRequested.Broadcast(ETrainingFeedbackType::Reignited);
+		}
+	}
+}
+
+void UFireManager::HandleTrackedFireIntensityChanged(float IntensityRatio)
+{
+	if (IntensityRatio > 0.0f &&
+		ScenarioState == EFireScenarioState::ExtinguishmentMonitoring)
+	{
+		CancelExtinguishmentMonitoring(true);
+	}
+}
+
+void UFireManager::RequireEvacuation()
+{
+	if (!bTrainingWorld || bTrainingFinished ||
+		ScenarioState == EFireScenarioState::EvacuationRequired ||
+		ScenarioState == EFireScenarioState::Completed)
+	{
+		return;
+	}
+
+	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
+	ScenarioState = EFireScenarioState::EvacuationRequired;
+	OnScenarioFeedbackRequested.Broadcast(ETrainingFeedbackType::EvacuateNow);
+
+	const float GraceSeconds = ActiveScenarioData
+		? FMath::Max(0.0f, ActiveScenarioData->EvacuationGraceSeconds) : 10.0f;
+	if (GraceSeconds <= 0.0f)
+	{
+		HandleEvacuationTimeout();
+		return;
+	}
+
+	GetWorldRef().GetTimerManager().SetTimer(EvacuationGraceTimer, this,
+		&UFireManager::HandleEvacuationTimeout, GraceSeconds, false);
+	UE_LOG(LogTemp, Warning, TEXT("Evacuation required. Player has %.1f seconds to reach an exit zone."),
+		GraceSeconds);
+}
+
+void UFireManager::NotifyPlayerEvacuated()
+{
+	// Reaching the exterior before evacuation is required is not a scenario result.
+	if (!bTrainingWorld || bTrainingFinished ||
+		ScenarioState != EFireScenarioState::EvacuationRequired)
+	{
+		return;
+	}
+
+	FinishTraining(ETrainingOutcome::Evacuated);
+}
+
+void UFireManager::HandleEvacuationTimeout()
+{
+	if (!bTrainingFinished && ScenarioState == EFireScenarioState::EvacuationRequired)
+	{
+		FinishTraining(ETrainingOutcome::Failed, ETrainingFailureReason::IgnoredEvacuation);
+	}
+}
+
+void UFireManager::FinishTraining(ETrainingOutcome Outcome, ETrainingFailureReason FailureReason)
+{
+	if (!bTrainingWorld || bTrainingFinished)
+	{
+		return;
+	}
+
+	bTrainingFinished = true;
+	ScenarioState = EFireScenarioState::Completed;
+	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
+	GetWorldRef().GetTimerManager().ClearTimer(EvacuationGraceTimer);
+	GetWorldRef().GetTimerManager().ClearTimer(SpreadEvaluationTimer);
+	const bool bSuccess = Outcome == ETrainingOutcome::Extinguished ||
+		Outcome == ETrainingOutcome::Evacuated;
+	UE_LOG(LogTemp, Log, TEXT("Training finished. Outcome=%d FailureReason=%d"),
+		static_cast<int32>(Outcome), static_cast<int32>(FailureReason));
+	ATrainingResultGameMode::OpenResultLevel(&GetWorldRef(), bSuccess);
 }
 
 void UFireManager::Deinitialize()
 {
-	GetWorldRef().GetTimerManager().ClearAllTimersForObject(this);
-	UnusedIgnitionPoints.Reset();
-	UnusedSpreadPoints.Reset();
-	SpreadWaitStartTimes.Reset();
+	GetWorldRef().GetTimerManager().ClearTimer(ExtinguishmentObservationTimer);
+	GetWorldRef().GetTimerManager().ClearTimer(EvacuationGraceTimer);
+	ResetSpreadSystem();
+	for (TActorIterator<AFireActor> Fire(&GetWorldRef()); Fire; ++Fire)
+	{
+		Fire->OnIntensityChanged.RemoveAll(this);
+	}
+	OnScenarioFeedbackRequested.Clear();
+	ActiveScenarioData = nullptr;
+	bTrainingWorld = false;
+	bTrainingFinished = false;
+	bScenarioStarted = false;
+	ScenarioState = EFireScenarioState::None;
 	Super::Deinitialize();
 }

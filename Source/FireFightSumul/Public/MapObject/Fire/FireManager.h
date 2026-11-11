@@ -3,10 +3,15 @@
 #include "CoreMinimal.h"
 #include "Engine/TimerHandle.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Training/FireTrainingTypes.h"
 #include "FireManager.generated.h"
 
 class AFireActor;
+class AFireSpreadAnchor;
 class ATargetPoint;
+class UFireScenarioDataAsset;
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnScenarioFeedbackRequested, ETrainingFeedbackType);
 
 UCLASS()
 class FIREFIGHTSUMUL_API UFireManager : public UWorldSubsystem
@@ -19,23 +24,49 @@ public:
 	void ToggleFireCollision();
 	bool IsFireCollisionEnabled() const { return bFireCollisionEnabled; }
 	bool HasFinishedTraining() const { return bTrainingFinished; }
+	bool StartScenario(UFireScenarioDataAsset* InScenarioData);
+	const UFireScenarioDataAsset* GetActiveScenarioData() const { return ActiveScenarioData; }
+	EFireScenarioState GetScenarioState() const { return ScenarioState; }
+	void RegisterFire(AFireActor& Fire);
 	void NotifyFireExtinguished();
-	void NotifyExtinguisherDepleted();
+	void NotifyPlayerEvacuated();
+
+	UFUNCTION(BlueprintCallable, Category = "Fire Training")
+	void RequireEvacuation();
+
+	FOnScenarioFeedbackRequested OnScenarioFeedbackRequested;
 
 private:
-	void FinishTraining(bool bSuccess);
-	void IgniteRandomPoints(int32 Count);
+	void BeginExtinguishmentMonitoring();
+	void CompleteExtinguishmentObservation();
+	void CancelExtinguishmentMonitoring(bool bShowReignitionFeedback);
+	void HandleTrackedFireIntensityChanged(float IntensityRatio);
+	void HandleEvacuationTimeout();
+	void InitializeSpreadSystem(const FVector& InitialLocation);
+	void EvaluateFireSpread();
+	void ResetSpreadSystem();
+	bool HasClearHeatPath(const AFireActor& SourceFire, const AFireSpreadAnchor& TargetAnchor) const;
+	bool IgniteLocation(const FVector& Location, float InitialIntensityRatio);
+	void CheckEvacuationThreshold(const AFireSpreadAnchor& IgnitedAnchor);
+	const FFireMaterialSetting* FindMaterialSetting(FName MaterialTag) const;
+	bool HasAnyBurningFire() const;
+	void FinishTraining(ETrainingOutcome Outcome,
+		ETrainingFailureReason FailureReason = ETrainingFailureReason::None);
 	bool IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio);
-	void UpdateSpreadReadiness(float IntensityRatio, TWeakObjectPtr<AFireActor> Source);
-	void SpreadFires();
-	bool TrySpreadFrom(AFireActor& Source);
+	ATargetPoint* SelectStartPoint(const UFireScenarioDataAsset& ScenarioData) const;
 
-	TArray<TWeakObjectPtr<ATargetPoint>> UnusedIgnitionPoints;
-	TArray<TWeakObjectPtr<ATargetPoint>> UnusedSpreadPoints;
-	TMap<TWeakObjectPtr<AFireActor>, double> SpreadWaitStartTimes;
-	FTimerHandle IgnitionTimer;
-	FTimerHandle SpreadTimer;
+	UPROPERTY(Transient)
+	TObjectPtr<UFireScenarioDataAsset> ActiveScenarioData;
+
 	bool bFireCollisionEnabled = true;
 	bool bTrainingWorld = false;
 	bool bTrainingFinished = false;
+	bool bScenarioStarted = false;
+	EFireScenarioState ScenarioState = EFireScenarioState::None;
+	FVector InitialFireLocation = FVector::ZeroVector;
+	int32 SpreadIgnitionCount = 0;
+	TArray<TWeakObjectPtr<AFireSpreadAnchor>> SpreadAnchors;
+	FTimerHandle ExtinguishmentObservationTimer;
+	FTimerHandle EvacuationGraceTimer;
+	FTimerHandle SpreadEvaluationTimer;
 };

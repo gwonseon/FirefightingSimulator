@@ -28,6 +28,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fire")
 	void ApplySuppression(float Amount);
 
+	UFUNCTION(BlueprintCallable, Category = "Fire")
+	void ApplySuppressionRatio(float RatioAmount);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;

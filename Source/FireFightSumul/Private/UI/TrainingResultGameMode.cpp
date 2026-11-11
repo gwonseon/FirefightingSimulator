@@ -19,7 +19,7 @@ void ATrainingResultGameMode::OpenResultLevel(const UObject* WorldContext, bool 
 {
 	const FString Options = FString::Printf(TEXT("game=%s?TrainingResult=%s"),
 		*StaticClass()->GetPathName(), bSuccess ? TEXT("Success") : TEXT("Fail"));
-	UGameplayStatics::OpenLevel(WorldContext, TEXT("/Game/Map/end"), true, Options);
+	UGameplayStatics::OpenLevel(WorldContext, TEXT("/Game/_Map/end"), true, Options);
 }
 
 void ATrainingResultGameMode::PostLogin(APlayerController* NewPlayer)
@@ -36,6 +36,6 @@ void ATrainingResultGameMode::PostLogin(APlayerController* NewPlayer)
 	{
 		Widget->AddToViewport();
 		NewPlayer->SetInputMode(FInputModeUIOnly());
-		NewPlayer->bShowMouseCursor = false;
+		NewPlayer->bShowMouseCursor = true;
 	}
 }

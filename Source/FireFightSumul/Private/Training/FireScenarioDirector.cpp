@@ -3,6 +3,7 @@
 #include "Components/SceneComponent.h"
 #include "Data/FireScenarioDataAsset.h"
 #include "Engine/World.h"
+#include "Game/FireTrainingGameInstance.h"
 #include "MapObject/Fire/FireManager.h"
 
 AFireScenarioDirector::AFireScenarioDirector()
@@ -17,18 +18,28 @@ void AFireScenarioDirector::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!ScenarioData)
+	UFireScenarioDataAsset* ScenarioToStart = ScenarioData;
+	if (const UFireTrainingGameInstance* TrainingGameInstance =
+		GetGameInstance<UFireTrainingGameInstance>())
+	{
+		if (UFireScenarioDataAsset* SelectedScenario = TrainingGameInstance->GetSelectedScenario())
+		{
+			ScenarioToStart = SelectedScenario;
+		}
+	}
+
+	if (!ScenarioToStart)
 	{
 		UE_LOG(LogTemp, Error,
-			TEXT("FireScenarioDirector '%s' has no assigned scenario."),
+			TEXT("FireScenarioDirector '%s' has no selected scenario or assigned fallback scenario."),
 			*GetName());
 		return;
 	}
 
 	UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>();
-	if (!FireManager || !FireManager->StartScenario(ScenarioData))
+	if (!FireManager || !FireManager->StartScenario(ScenarioToStart))
 	{
 		UE_LOG(LogTemp, Error, TEXT("FireScenarioDirector '%s' failed to start scenario '%s'."),
-			*GetName(), *ScenarioData->ScenarioId.ToString());
+			*GetName(), *ScenarioToStart->ScenarioId.ToString());
 	}
 }

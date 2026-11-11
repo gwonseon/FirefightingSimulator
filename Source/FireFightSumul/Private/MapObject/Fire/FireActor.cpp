@@ -2,11 +2,53 @@
 
 #include "AimTraceChannel.h"
 #include "Components/SphereComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "MapObject/Fire/FireManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "UObject/ConstructorHelpers.h"
+#include "UObject/UnrealType.h"
+
+namespace
+{
+	const FName WindowHealthPropertyName(TEXT("Health"));
+	const FName WindowFireDpsPropertyName(TEXT("FireDPS"));
+	const FName WindowBrokenPropertyName(TEXT("bBroken"));
+	const FName BreakWindowFunctionName(TEXT("BreakWindow"));
+
+	FNumericProperty* FindFloatingPointProperty(const UClass* Class, const FName PropertyName)
+	{
+		FNumericProperty* Property = FindFProperty<FNumericProperty>(Class, PropertyName);
+		return Property && Property->IsFloatingPoint() ? Property : nullptr;
+	}
+
+	bool ReadFloatingPointProperty(const UObject& Object, const FName PropertyName, double& OutValue)
+	{
+		const FNumericProperty* Property = FindFloatingPointProperty(Object.GetClass(), PropertyName);
+		if (!Property)
+		{
+			return false;
+		}
+
+		const void* ValueAddress = Property->ContainerPtrToValuePtr<void>(&Object);
+		OutValue = Property->GetFloatingPointPropertyValue(ValueAddress);
+		return true;
+	}
+
+	bool WriteFloatingPointProperty(UObject& Object, const FName PropertyName, const double Value)
+	{
+		FNumericProperty* Property = FindFloatingPointProperty(Object.GetClass(), PropertyName);
+		if (!Property)
+		{
+			return false;
+		}
+
+		void* ValueAddress = Property->ContainerPtrToValuePtr<void>(&Object);
+		Property->SetFloatingPointPropertyValue(ValueAddress, Value);
+		return true;
+	}
+}
 
 const FName AFireActor::AimTag(TEXT("Fire"));
 
@@ -28,6 +70,23 @@ AFireActor::AFireActor()
 	AimSphere->SetCollisionResponseToChannel(AimTraceChannel, ECR_Block);
 	AimSphere->SetGenerateOverlapEvents(false);
 
+	// AimSphere remains dedicated to aiming. HeatCollision is independent from
+	// UFireManager's aim-collision debug toggle.
+	HeatCollision = CreateDefaultSubobject<USphereComponent>(TEXT("HeatCollision"));
+	HeatCollision->SetupAttachment(GetRootComponent());
+	HeatCollision->SetRelativeLocation(FVector(0.0, 0.0, 50.0));
+	HeatCollision->InitSphereRadius(50.0f);
+	HeatCollision->SetCollisionObjectType(ECC_WorldDynamic);
+	HeatCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HeatCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HeatCollision->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
+	HeatCollision->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
+	HeatCollision->SetGenerateOverlapEvents(true);
+	HeatCollision->OnComponentBeginOverlap.AddDynamic(
+		this, &AFireActor::HandleHeatOverlapBegin);
+	HeatCollision->OnComponentEndOverlap.AddDynamic(
+		this, &AFireActor::HandleHeatOverlapEnd);
+
 	static const ConstructorHelpers::FObjectFinder<UNiagaraSystem> DefaultFireEffect(
 		TEXT("/Game/_Effect/NS_Fire.NS_Fire"));
 	if (DefaultFireEffect.Succeeded())
@@ -46,6 +105,8 @@ void AFireActor::BeginPlay()
 	FireEffect->Activate(true);
 	RecoveryStartTime = GetWorld()->GetTimeSeconds();
 	SetIntensity(CurrentIntensity * InitialIntensityRatio);
+	GetWorld()->GetTimerManager().SetTimer(HeatDamageTimer, this,
+		&AFireActor::ApplyHeatDamage, FMath::Max(0.02f, HeatDamageInterval), true);
 	if (const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
 	{
 		SetAimCollisionEnabled(FireManager->IsFireCollisionEnabled());
@@ -64,8 +125,10 @@ void AFireActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UWorld* World = GetWorld())
 	{
+		World->GetTimerManager().ClearTimer(HeatDamageTimer);
 		World->GetTimerManager().ClearTimer(ReignitionTimer);
 	}
+	HeatedWindows.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -99,6 +162,148 @@ void AFireActor::SetAimCollisionEnabled(bool bEnabled)
 {
 	AimSphere->SetCollisionEnabled(bEnabled && CurrentIntensity > 0.0f
 		? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+}
+
+void AFireActor::HandleHeatOverlapBegin(UPrimitiveComponent* OverlappedComponent,
+	AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+	bool bFromSweep, const FHitResult& SweepResult)
+{
+	if (IsWindowHeatOverlap(OtherActor, OtherComp))
+	{
+		HeatedWindows.Add(OtherActor);
+	}
+}
+
+void AFireActor::HandleHeatOverlapEnd(UPrimitiveComponent* OverlappedComponent,
+	AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+	if (OtherActor && OtherComp && OtherComp->GetName().StartsWith(TEXT("HeatSphere")))
+	{
+		HeatedWindows.Remove(OtherActor);
+	}
+}
+
+bool AFireActor::IsWindowHeatOverlap(const AActor* OtherActor,
+	const UPrimitiveComponent* OtherComp) const
+{
+	if (!OtherActor || OtherActor == this || !OtherComp ||
+		!OtherComp->GetName().StartsWith(TEXT("HeatSphere")))
+	{
+		return false;
+	}
+
+	return FindFloatingPointProperty(OtherActor->GetClass(), WindowHealthPropertyName) &&
+		OtherActor->FindFunction(BreakWindowFunctionName);
+}
+
+void AFireActor::RefreshHeatedWindows()
+{
+	if (!HeatCollision || !GetWorld() || CurrentIntensity <= 0.0f)
+	{
+		HeatedWindows.Reset();
+		return;
+	}
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(FireWindowHeatOverlap), false, this);
+	TArray<FOverlapResult> Overlaps;
+	GetWorld()->OverlapMultiByObjectType(Overlaps, HeatCollision->GetComponentLocation(),
+		FQuat::Identity, ObjectQueryParams,
+		FCollisionShape::MakeSphere(HeatCollision->GetScaledSphereRadius()), QueryParams);
+
+	TSet<TWeakObjectPtr<AActor>> DetectedWindows;
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AActor* OtherActor = Overlap.GetActor();
+		UPrimitiveComponent* OtherComponent = Overlap.GetComponent();
+		if (IsWindowHeatOverlap(OtherActor, OtherComponent))
+		{
+			DetectedWindows.Add(OtherActor);
+			if (!HeatedWindows.Contains(OtherActor))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Fire heat overlap started: Fire='%s', Window='%s'."),
+					*GetNameSafe(this), *GetNameSafe(OtherActor));
+			}
+		}
+	}
+
+	HeatedWindows = MoveTemp(DetectedWindows);
+}
+
+void AFireActor::SetHeatCollisionEnabled(bool bEnabled)
+{
+	const ECollisionEnabled::Type DesiredState = bEnabled
+		? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision;
+	if (HeatCollision->GetCollisionEnabled() == DesiredState)
+	{
+		return;
+	}
+
+	HeatCollision->SetCollisionEnabled(DesiredState);
+	if (!bEnabled)
+	{
+		HeatedWindows.Reset();
+	}
+}
+
+void AFireActor::ApplyHeatDamage()
+{
+	RefreshHeatedWindows();
+	if (CurrentIntensity <= 0.0f || HeatedWindows.IsEmpty())
+	{
+		return;
+	}
+
+	const float DamageInterval = FMath::Max(0.02f, HeatDamageInterval);
+	for (auto It = HeatedWindows.CreateIterator(); It; ++It)
+	{
+		AActor* Window = It->Get();
+		if (!IsValid(Window))
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		if (const FBoolProperty* BrokenProperty =
+			FindFProperty<FBoolProperty>(Window->GetClass(), WindowBrokenPropertyName);
+			BrokenProperty && BrokenProperty->GetPropertyValue_InContainer(Window))
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		UFunction* BreakWindowFunction = Window->FindFunction(BreakWindowFunctionName);
+		double Health = 0.0;
+		if (!ReadFloatingPointProperty(*Window, WindowHealthPropertyName, Health) ||
+			!BreakWindowFunction)
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		double DamagePerSecond = DefaultWindowFireDamagePerSecond;
+		double ConfiguredDamage = 0.0;
+		if (ReadFloatingPointProperty(*Window, WindowFireDpsPropertyName, ConfiguredDamage))
+		{
+			if (FMath::IsFinite(ConfiguredDamage) && ConfiguredDamage > 0.0f)
+			{
+				DamagePerSecond = ConfiguredDamage;
+			}
+		}
+
+		Health = FMath::Max(0.0, Health - DamagePerSecond * DamageInterval);
+		WriteFloatingPointProperty(*Window, WindowHealthPropertyName, Health);
+		if (Health <= 0.0f)
+		{
+			It.RemoveCurrent();
+			UE_LOG(LogTemp, Log, TEXT("Fire heat depleted window health; calling BreakWindow on '%s'."),
+				*GetNameSafe(Window));
+			Window->ProcessEvent(BreakWindowFunction, nullptr);
+		}
+	}
 }
 
 void AFireActor::ApplySuppression(float Amount)
@@ -218,6 +423,7 @@ void AFireActor::SetIntensity(float NewIntensity)
 			SetActorTickEnabled(false);
 		}
 	}
+	SetHeatCollisionEnabled(CurrentIntensity > 0.0f);
 
 	OnIntensityChanged.Broadcast(GetIntensityRatio());
 	if (bWasBurning && CurrentIntensity == 0.0f)

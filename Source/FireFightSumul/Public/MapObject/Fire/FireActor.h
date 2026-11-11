@@ -6,6 +6,7 @@
 #include "FireActor.generated.h"
 
 class UNiagaraComponent;
+class UPrimitiveComponent;
 class USphereComponent;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnFireIntensityChanged, float);
@@ -45,6 +46,19 @@ protected:
 	virtual void Tick(float DeltaSeconds) override;
 
 private:
+	UFUNCTION()
+	void HandleHeatOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
+		const FHitResult& SweepResult);
+
+	UFUNCTION()
+	void HandleHeatOverlapEnd(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
+	void RefreshHeatedWindows();
+	void ApplyHeatDamage();
+	void SetHeatCollisionEnabled(bool bEnabled);
+	bool IsWindowHeatOverlap(const AActor* OtherActor, const UPrimitiveComponent* OtherComp) const;
 	void SetIntensity(float NewIntensity);
 	void BeginGrowth(double StartTime);
 	void ScheduleReignition();
@@ -55,6 +69,17 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category = "Fire")
 	TObjectPtr<USphereComponent> AimSphere;
+
+	UPROPERTY(VisibleAnywhere, Category = "Fire|Heat")
+	TObjectPtr<USphereComponent> HeatCollision;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Fire|Heat",
+		meta = (ClampMin = "0.02", Units = "s"))
+	float HeatDamageInterval = 0.1f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Fire|Heat",
+		meta = (ClampMin = "0.0"))
+	float DefaultWindowFireDamagePerSecond = 40.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Fire", meta = (ClampMin = "1.0"))
 	float MaxIntensity = 100.0f;
@@ -100,5 +125,7 @@ private:
 	double RecoveryStartTime = 0.0;
 	float GrowthStartIntensityRatio = 1.0f;
 	FVector InitialEffectScale = FVector::OneVector;
+	TSet<TWeakObjectPtr<AActor>> HeatedWindows;
+	FTimerHandle HeatDamageTimer;
 	FTimerHandle ReignitionTimer;
 };

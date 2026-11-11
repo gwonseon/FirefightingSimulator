@@ -12,6 +12,17 @@
 
 namespace
 {
+	constexpr float SmokeOnlyEmitterCutoff = 0.25f;
+	const FName SmokeEmitterName(TEXT("Smoke"));
+	const FName NonSmokeEmitterNames[] =
+	{
+		TEXT("Fire"),
+		TEXT("Fire_Top"),
+		TEXT("Blow_ember"),
+		TEXT("Blow_ember2"),
+		TEXT("Distortion")
+	};
+
 	const FName WindowHealthPropertyName(TEXT("Health"));
 	const FName WindowFireDpsPropertyName(TEXT("FireDPS"));
 	const FName WindowBrokenPropertyName(TEXT("bBroken"));
@@ -380,9 +391,9 @@ void AFireActor::BeginGrowth(double StartTime)
 
 void AFireActor::SetIntensity(float NewIntensity)
 {
-	constexpr float FireEmitterCutoff = 0.0f;
 	const bool bWasBurning = CurrentIntensity > 0.0f;
-	const bool bWasFireEmitterEnabled = GetIntensityRatio() > FireEmitterCutoff;
+	const bool bWasSmokeOnly = bWasBurning &&
+		GetIntensityRatio() <= SmokeOnlyEmitterCutoff;
 	const float IntensityLimit = FMath::Max(1.0f, MaxIntensity);
 	CurrentIntensity = FMath::Clamp(NewIntensity, 0.0f, IntensityLimit);
 	if (CurrentIntensity <= UE_KINDA_SMALL_NUMBER)
@@ -409,11 +420,14 @@ void AFireActor::SetIntensity(float NewIntensity)
 		}
 
 		const float IntensityRatio = GetIntensityRatio();
-		const bool bEnableFireEmitter = IntensityRatio > FireEmitterCutoff;
-		if (bWasFireEmitterEnabled != bEnableFireEmitter)
+		const bool bSmokeOnly = IntensityRatio <= SmokeOnlyEmitterCutoff;
+		if (!bWasBurning || bWasSmokeOnly != bSmokeOnly)
 		{
-			static const FName FireEmitterName(TEXT("Fire"));
-			FireEffect->SetEmitterEnable(FireEmitterName, bEnableFireEmitter);
+			FireEffect->SetEmitterEnable(SmokeEmitterName, true);
+			for (const FName& EmitterName : NonSmokeEmitterNames)
+			{
+				FireEffect->SetEmitterEnable(EmitterName, !bSmokeOnly);
+			}
 		}
 
 		const float EffectScale = FMath::Lerp(0.1f, 1.0f, IntensityRatio);

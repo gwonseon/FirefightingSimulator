@@ -7,7 +7,19 @@
 #include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Curves/CurveFloat.h"
+#include "Data/ExtinguisherDataAsset.h"
 #include "Engine/World.h"
+
+namespace
+{
+	constexpr float FallbackAgentMassKg = 3.3f;
+	constexpr float FallbackDischargeDurationSeconds = 12.0f;
+	constexpr float FallbackBaseSuppressionRatioPerSecond = 0.25f;
+	constexpr float FallbackMinSafeDistanceCm = 200.0f;
+	constexpr float FallbackMaxEffectiveDistanceCm = 500.0f;
+	constexpr float FallbackLowAgentStartRatio = 0.15f;
+}
 
 AWorldExtinguisher::AWorldExtinguisher()
 {
@@ -36,7 +48,13 @@ AWorldExtinguisher::AWorldExtinguisher()
 void AWorldExtinguisher::BeginPlay()
 {
 	PinRestRelativeLocation = PinPivot->GetRelativeLocation();
-	RemainingAgent = FMath::Clamp(InitialAgentAmount, 0.0f, FMath::Max(AgentCapacity, 0.0f));
+	RemainingAgentKg = GetAgentCapacityKg() * FMath::Clamp(InitialAgentRatio, 0.0f, 1.0f);
+	if (!ExtinguisherData)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ExtinguisherData is not assigned to %s. Using the built-in 3.3kg ABC fallback values."),
+			*GetName());
+	}
 
 	TInlineComponentArray<UBoxComponent*> Boxes(this);
 	bool bHasSelectionBox = false;
@@ -122,16 +140,81 @@ void AWorldExtinguisher::SetPinPullProgress(float Progress)
 	}
 }
 
-float AWorldExtinguisher::GetAgentRatio() const
+float AWorldExtinguisher::GetAgentCapacityKg() const
 {
-	return AgentCapacity > 0.0f ? RemainingAgent / AgentCapacity : 0.0f;
+	return ExtinguisherData ? FMath::Max(ExtinguisherData->AgentMassKg, 0.0f) : FallbackAgentMassKg;
 }
 
-float AWorldExtinguisher::ConsumeAgent(float RequestedAmount)
+float AWorldExtinguisher::GetAgentRatio() const
 {
-	const float UsedAmount = FMath::Clamp(RequestedAmount, 0.0f, RemainingAgent);
-	RemainingAgent -= UsedAmount;
-	return UsedAmount;
+	const float CapacityKg = GetAgentCapacityKg();
+	return CapacityKg > 0.0f ? FMath::Clamp(RemainingAgentKg / CapacityKg, 0.0f, 1.0f) : 0.0f;
+}
+
+float AWorldExtinguisher::GetDischargeRateKgPerSecond() const
+{
+	const float DurationSeconds = ExtinguisherData
+		? FMath::Max(ExtinguisherData->DischargeDurationSeconds, 0.1f)
+		: FallbackDischargeDurationSeconds;
+	return GetAgentCapacityKg() / DurationSeconds;
+}
+
+float AWorldExtinguisher::GetBaseSuppressionRatioPerSecond() const
+{
+	return ExtinguisherData
+		? FMath::Max(ExtinguisherData->BaseSuppressionPerSecond, 0.0f)
+		: FallbackBaseSuppressionRatioPerSecond;
+}
+
+float AWorldExtinguisher::GetMinSafeDistanceCm() const
+{
+	return ExtinguisherData
+		? FMath::Max(ExtinguisherData->MinSafeDistanceCm, 0.0f)
+		: FallbackMinSafeDistanceCm;
+}
+
+float AWorldExtinguisher::GetMaxEffectiveDistanceCm() const
+{
+	const float MaxDistance = ExtinguisherData
+		? ExtinguisherData->MaxEffectiveDistanceCm
+		: FallbackMaxEffectiveDistanceCm;
+	return FMath::Max(MaxDistance, GetMinSafeDistanceCm() + 1.0f);
+}
+
+float AWorldExtinguisher::GetLowAgentStartRatio() const
+{
+	return FMath::Clamp(
+		ExtinguisherData ? ExtinguisherData->LowAgentStartRatio : FallbackLowAgentStartRatio,
+		0.0f, 1.0f);
+}
+
+float AWorldExtinguisher::GetRemainingAgentPerformanceFactor() const
+{
+	const float AgentRatio = GetAgentRatio();
+	if (AgentRatio <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	const float CurveFactor = ExtinguisherData && ExtinguisherData->RemainingAgentCurve
+		? FMath::Clamp(ExtinguisherData->RemainingAgentCurve->GetFloatValue(AgentRatio), 0.0f, 1.0f)
+		: 1.0f;
+	const float LowAgentStartRatio = FMath::Max(GetLowAgentStartRatio(), UE_KINDA_SMALL_NUMBER);
+	if (AgentRatio >= LowAgentStartRatio)
+	{
+		return CurveFactor;
+	}
+
+	const float LowAgentAlpha = FMath::Clamp(AgentRatio / LowAgentStartRatio, 0.0f, 1.0f);
+	const float LowAgentFalloff = FMath::SmoothStep(0.0f, 1.0f, LowAgentAlpha);
+	return CurveFactor * LowAgentFalloff;
+}
+
+float AWorldExtinguisher::ConsumeAgentKg(float RequestedAmountKg)
+{
+	const float UsedAmountKg = FMath::Clamp(RequestedAmountKg, 0.0f, RemainingAgentKg);
+	RemainingAgentKg -= UsedAmountKg;
+	return UsedAmountKg;
 }
 
 bool AWorldExtinguisher::TryRemovePin()

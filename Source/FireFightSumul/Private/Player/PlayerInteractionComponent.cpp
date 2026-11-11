@@ -4,6 +4,8 @@
 #include "CollisionQueryParams.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SphereComponent.h"
+#include "Curves/CurveFloat.h"
+#include "Data/ExtinguisherDataAsset.h"
 #include "DoorInteractionLog.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -24,20 +26,6 @@ namespace
 	TAutoConsoleVariable<int32> CVarDrawSpray(
 		TEXT("ffs.DebugSpray"), 1, TEXT("Draw the spray cone and fire collision spheres while spraying."));
 #endif
-
-	float GetChargeSuppressionMultiplier(float AgentRatio)
-	{
-		// Relative MAP extinguishment rates from Table 3 (PMC11818437), normalized to the 0.3 MPa test.
-		if (AgentRatio >= 0.75f)
-		{
-			return 1.0f;
-		}
-		if (AgentRatio >= 0.35f)
-		{
-			return 2.1f / 4.7f;
-		}
-		return 2.1f / 22.8f;
-	}
 }
 
 bool UPlayerInteractionComponent::IsExtinguisherEquipped() const
@@ -129,7 +117,7 @@ void UPlayerInteractionComponent::Interact()
 void UPlayerInteractionComponent::PrimaryInteract()
 {
 	EndPrimaryInteract();
-	const AFireFighter* Player = Cast<AFireFighter>(GetOwner());
+	AFireFighter* Player = Cast<AFireFighter>(GetOwner());
 	if (!Player)
 	{
 		return;
@@ -155,7 +143,11 @@ void UPlayerInteractionComponent::PrimaryInteract()
 		return;
 	}
 	const AWorldExtinguisher* Extinguisher = EquippedExtinguisher.Get();
-	bSpraying = Player->GetEquippedNozzle() && Extinguisher && Extinguisher->GetRemainingAgent() > 0.0f;
+	bSpraying = Player->GetEquippedNozzle() && Extinguisher && Extinguisher->GetRemainingAgentKg() > 0.0f;
+	if (!bSpraying && Extinguisher && Extinguisher->GetRemainingAgentKg() <= 0.0f)
+	{
+		ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherEmpty);
+	}
 }
 
 void UPlayerInteractionComponent::InteractWithDoor()
@@ -191,35 +183,60 @@ void UPlayerInteractionComponent::ContinuePrimaryInteract()
 	const USceneComponent* Nozzle = Player ? Player->GetEquippedNozzle() : nullptr;
 	AWorldExtinguisher* Extinguisher = EquippedExtinguisher.Get();
 	UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>();
-	/*if (!Nozzle || !Extinguisher || Extinguisher->GetRemainingAgent() <= 0.0f ||
+	if (!Nozzle || !Extinguisher || Extinguisher->GetRemainingAgentKg() <= 0.0f ||
 		(FireManager && FireManager->HasFinishedTraining()))
+	{
+		const bool bAgentDepleted = Extinguisher && Extinguisher->GetRemainingAgentKg() <= 0.0f;
+		EndPrimaryInteract();
+		if (bAgentDepleted)
+		{
+			ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherEmpty);
+		}
+		return;
+	}
+
+	const float DischargeRateKgPerSecond = Extinguisher->GetDischargeRateKgPerSecond();
+	if (DischargeRateKgPerSecond <= UE_KINDA_SMALL_NUMBER)
 	{
 		EndPrimaryInteract();
 		return;
-	}*/
+	}
 
-	const float AgentRatio = Extinguisher->GetAgentRatio();
-	const float AgentUsed = Extinguisher->ConsumeAgent(FMath::Max(AgentPerSecond, 0.01f) * GetWorld()->GetDeltaSeconds());
-	if (AgentUsed > 0.0f)
+	const float PerformanceFactor = Extinguisher->GetRemainingAgentPerformanceFactor();
+	const float RequestedAgentKg = DischargeRateKgPerSecond * GetWorld()->GetDeltaSeconds();
+	const float UsedAgentKg = Extinguisher->ConsumeAgentKg(RequestedAgentKg);
+	ETrainingFeedbackType FeedbackType = ETrainingFeedbackType::None;
+	if (UsedAgentKg > 0.0f)
 	{
 		NotifyExtinguisherStatusChanged();
-		const float SuppressionAmount = AgentUsed * SuppressionPerUnit * GetChargeSuppressionMultiplier(AgentRatio);
-		ApplySpray(*Nozzle, SuppressionAmount);
+		const float ActualSpraySeconds = UsedAgentKg / DischargeRateKgPerSecond;
+		const float SuppressionRatio = Extinguisher->GetBaseSuppressionRatioPerSecond()
+			* ActualSpraySeconds * PerformanceFactor;
+		FeedbackType = ApplySpray(*Nozzle, *Extinguisher, SuppressionRatio);
 	}
-	if (Extinguisher->GetRemainingAgent() <= 0.0f)
+	if (Extinguisher->GetRemainingAgentKg() <= 0.0f)
 	{
-	/*	EndPrimaryInteract();
-		if (FireManager)
-		{
-			FireManager->NotifyExtinguisherDepleted();
-		}
-		*/
+		EndPrimaryInteract();
+		ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherEmpty);
+	}
+	else if (Extinguisher->GetAgentRatio() <= Extinguisher->GetLowAgentStartRatio())
+	{
+		ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherLow);
+	}
+	else
+	{
+		ReportTrainingFeedback(FeedbackType);
 	}
 }
 
 void UPlayerInteractionComponent::EndPrimaryInteract()
 {
+	const bool bWasSpraying = bSpraying;
 	bSpraying = false;
+	if (bWasSpraying)
+	{
+		ReportTrainingFeedback(ETrainingFeedbackType::None);
+	}
 	const AFireFighter* Player = Cast<AFireFighter>(GetOwner());
 	if (AFireFighterPlayerController* Controller = Player ? Cast<AFireFighterPlayerController>(Player->GetController()) : nullptr)
 	{
@@ -227,11 +244,19 @@ void UPlayerInteractionComponent::EndPrimaryInteract()
 	}
 }
 
-void UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle, float SuppressionAmount) const
+void UPlayerInteractionComponent::ReportTrainingFeedback(ETrainingFeedbackType Type)
+{
+	OnTrainingFeedbackSampled.Broadcast(Type);
+}
+
+ETrainingFeedbackType UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle,
+	const AWorldExtinguisher& Extinguisher, float SuppressionRatio) const
 {
 	const FVector Origin = Nozzle.GetComponentLocation();
 	const FVector Forward = Nozzle.GetForwardVector();
-	const double Range = FMath::Max(1.0f, SprayRange);
+	const double Range = FMath::Max(1.0f, Extinguisher.GetMaxEffectiveDistanceCm());
+	const double MinSafeDistance = FMath::Clamp(
+		static_cast<double>(Extinguisher.GetMinSafeDistanceCm()), 0.0, Range);
 	const double HalfAngleDegrees = FMath::Clamp(SprayHalfAngle, 1.0f, 80.0f);
 	const double HalfAngle = FMath::DegreesToRadians(HalfAngleDegrees);
 	const double Slope = FMath::Tan(HalfAngle);
@@ -244,13 +269,28 @@ void UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle, floa
 	const bool bDrawSpray = CVarDrawSpray.GetValueOnGameThread() != 0;
 	if (bDrawSpray)
 	{
-		// DrawDebugCone measures along its side, while SprayRange measures along the axis.
+		// DrawDebugCone measures along its side, while the Data Asset range measures along the axis.
 		DrawDebugCone(GetWorld(), Origin, Forward, ConeRim.Size(), HalfAngle, HalfAngle, 12,
 			FColor::Cyan, false, DebugLifetime, 0, 1.0f);
 		DrawDebugDirectionalArrow(GetWorld(), Origin, Origin + Forward * Range, 15.0f,
 			FColor::Yellow, false, DebugLifetime, 0, 1.5f);
 	}
 #endif
+
+	struct FFeedbackCandidate
+	{
+		bool bValid = false;
+		bool bIntersectsCone = false;
+		bool bOccluded = false;
+		double DistanceCm = 0.0;
+		double Score = TNumericLimits<double>::Max();
+		float AngleFraction = 0.0f;
+		float AimHeight01 = 0.0f;
+	};
+
+	FFeedbackCandidate FeedbackCandidate;
+	bool bHasBurningFire = false;
+	const double GuidanceHalfAngle = FMath::Min(HalfAngle * 3.0, UE_HALF_PI);
 
 	for (TActorIterator<AFireActor> It(GetWorld()); It; ++It)
 	{
@@ -260,6 +300,7 @@ void UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle, floa
 		{
 			continue;
 		}
+		bHasBurningFire = true;
 
 		// In a section through the cone axis, X is depth and Y is distance from the axis.
 		const FVector SphereLocation = Sphere->GetComponentLocation();
@@ -282,6 +323,29 @@ void UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle, floa
 		const bool bOccluded = bIntersectsCone &&
 			GetWorld()->LineTraceTestByChannel(Origin, ContactPoint, ECC_Visibility, OcclusionParams);
 
+		const double CenterDistance = ToCenter.Size();
+		const double CenterAngle = Depth > 0.0
+			? FMath::Atan2(Radial.Size(), Depth)
+			: UE_PI;
+		if (Depth > 0.0 && CenterDistance <= Range * 2.0 && CenterAngle <= GuidanceHalfAngle)
+		{
+			const double CandidateScore = CenterAngle + CenterDistance / (Range * 1000.0);
+			if (CandidateScore < FeedbackCandidate.Score)
+			{
+				const FVector AxisPoint = Origin + Forward * Depth;
+				const float SphereDiameter = FMath::Max(SphereRadius * 2.0f, 1.0f);
+				FeedbackCandidate.bValid = true;
+				FeedbackCandidate.bIntersectsCone = bIntersectsCone;
+				FeedbackCandidate.bOccluded = bOccluded;
+				FeedbackCandidate.DistanceCm = CenterDistance;
+				FeedbackCandidate.Score = CandidateScore;
+				FeedbackCandidate.AngleFraction = static_cast<float>(CenterAngle / HalfAngle);
+				FeedbackCandidate.AimHeight01 = FMath::Clamp(
+					(AxisPoint.Z - (SphereLocation.Z - SphereRadius)) / SphereDiameter,
+					0.0f, 1.0f);
+			}
+		}
+
 #if ENABLE_DRAW_DEBUG
 		if (bDrawSpray)
 		{
@@ -296,12 +360,59 @@ void UPlayerInteractionComponent::ApplySpray(const USceneComponent& Nozzle, floa
 			continue;
 		}
 
-		const double AngleFraction = FMath::Clamp(FMath::Atan2(Contact.Y, Contact.X) / HalfAngle, 0.0, 1.0);
-		const double DistanceFraction = Contact.X / Range;
-		const double AngleFactor = FMath::Lerp(1.0, 0.15, AngleFraction);
-		const double DistanceFactor = FMath::Lerp(1.0, 0.2, DistanceFraction);
-		Fire->ApplySuppression(SuppressionAmount * AngleFactor * DistanceFactor);
+		const float AngleFraction = static_cast<float>(
+			FMath::Clamp(FMath::Atan2(Contact.Y, Contact.X) / HalfAngle, 0.0, 1.0));
+		const float DistanceFraction = static_cast<float>(FMath::Clamp(Contact.X / Range, 0.0, 1.0));
+		const UExtinguisherDataAsset* Data = Extinguisher.GetExtinguisherData();
+		const float AngleFactor = Data && Data->ConeCenterCurve
+			? FMath::Clamp(Data->ConeCenterCurve->GetFloatValue(AngleFraction), 0.0f, 1.0f)
+			: FMath::Lerp(1.0f, 0.15f, AngleFraction);
+
+		float DistanceFactor = 1.0f;
+		if (Data && Data->DistanceCurve)
+		{
+			DistanceFactor = FMath::Clamp(Data->DistanceCurve->GetFloatValue(DistanceFraction), 0.0f, 1.0f);
+		}
+		else if (Contact.X > MinSafeDistance)
+		{
+			const double FalloffLength = FMath::Max(Range - MinSafeDistance, 1.0);
+			const float FalloffFraction = static_cast<float>(
+				FMath::Clamp((Contact.X - MinSafeDistance) / FalloffLength, 0.0, 1.0));
+			DistanceFactor = FMath::Lerp(1.0f, 0.2f, FalloffFraction);
+		}
+
+		Fire->ApplySuppressionRatio(SuppressionRatio * AngleFactor * DistanceFactor);
 	}
+
+	if (!FeedbackCandidate.bValid)
+	{
+		return bHasBurningFire ? ETrainingFeedbackType::OffCenter : ETrainingFeedbackType::None;
+	}
+	if (FeedbackCandidate.bOccluded)
+	{
+		return ETrainingFeedbackType::Occluded;
+	}
+	if (FeedbackCandidate.DistanceCm < MinSafeDistance)
+	{
+		return ETrainingFeedbackType::TooClose;
+	}
+	if (FeedbackCandidate.DistanceCm > Range)
+	{
+		return ETrainingFeedbackType::TooFar;
+	}
+	if (!FeedbackCandidate.bIntersectsCone)
+	{
+		return ETrainingFeedbackType::OffCenter;
+	}
+	if (FeedbackCandidate.AimHeight01 > 0.45f)
+	{
+		return ETrainingFeedbackType::AimTooHigh;
+	}
+	if (FeedbackCandidate.AngleFraction > 0.6f)
+	{
+		return ETrainingFeedbackType::OffCenter;
+	}
+	return ETrainingFeedbackType::GoodAim;
 }
 
 AActor* UPlayerInteractionComponent::FindAimedActor() const

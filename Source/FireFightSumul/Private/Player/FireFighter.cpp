@@ -7,6 +7,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DoorInteractionLog.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
@@ -16,7 +17,7 @@
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
-#include "MapObject/Fire/FireManager.h"
+#include "HAL/IConsoleManager.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Player/PlayerInteractionComponent.h"
@@ -50,6 +51,7 @@ AFireFighter::AFireFighter()
 void AFireFighter::BeginPlay()
 {
 	Super::BeginPlay();
+	SetCollisionDebugVisible(false);
 	SprayEffectComponent->SetRelativeScale3D(
 		FVector(1.0f, SprayVisualWidthScale, SprayVisualWidthScale));
 	SetHoseEquipped(false);
@@ -259,12 +261,12 @@ void AFireFighter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	DoorInteractAction->ValueType = EInputActionValueType::Boolean;
 	InputMapping->MapKey(DoorInteractAction, EKeys::RightMouseButton);
 
-	UInputAction* ToggleFireCollisionAction = NewObject<UInputAction>(InputMapping);
-	ToggleFireCollisionAction->ValueType = EInputActionValueType::Boolean;
-	ToggleFireCollisionAction->bConsumesActionAndAxisMappings = true;
-	ToggleFireCollisionAction->TriggerEventsThatConsumeLegacyKeys = static_cast<int32>(
+	UInputAction* ToggleCollisionDebugAction = NewObject<UInputAction>(InputMapping);
+	ToggleCollisionDebugAction->ValueType = EInputActionValueType::Boolean;
+	ToggleCollisionDebugAction->bConsumesActionAndAxisMappings = true;
+	ToggleCollisionDebugAction->TriggerEventsThatConsumeLegacyKeys = static_cast<int32>(
 		ETriggerEvent::Started | ETriggerEvent::Triggered | ETriggerEvent::Completed | ETriggerEvent::Canceled);
-	InputMapping->MapKey(ToggleFireCollisionAction, EKeys::M);
+	InputMapping->MapKey(ToggleCollisionDebugAction, EKeys::M);
 
 	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AFireFighter::Move);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AFireFighter::Look);
@@ -276,7 +278,7 @@ void AFireFighter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	Input->BindAction(JumpAction, ETriggerEvent::Canceled, this, &ACharacter::StopJumping);
 	Input->BindAction(InteractAction, ETriggerEvent::Started, InteractionComponent.Get(), &UPlayerInteractionComponent::Interact);
 	Input->BindAction(DoorInteractAction, ETriggerEvent::Started, InteractionComponent.Get(), &UPlayerInteractionComponent::InteractWithDoor);
-	Input->BindAction(ToggleFireCollisionAction, ETriggerEvent::Started, this, &AFireFighter::ToggleFireCollision);
+	Input->BindAction(ToggleCollisionDebugAction, ETriggerEvent::Started, this, &AFireFighter::ToggleCollisionDebug);
 	Input->BindAction(PrimaryInteractAction, ETriggerEvent::Started, InteractionComponent.Get(), &UPlayerInteractionComponent::PrimaryInteract);
 	Input->BindAction(PrimaryInteractAction, ETriggerEvent::Triggered, InteractionComponent.Get(), &UPlayerInteractionComponent::ContinuePrimaryInteract);
 	Input->BindAction(PrimaryInteractAction, ETriggerEvent::Completed, InteractionComponent.Get(), &UPlayerInteractionComponent::EndPrimaryInteract);
@@ -287,12 +289,30 @@ void AFireFighter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		*GetName(), GetCapsuleComponent()->GetGenerateOverlapEvents());
 }
 
-void AFireFighter::ToggleFireCollision()
+void AFireFighter::ToggleCollisionDebug()
 {
-	if (UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
+	SetCollisionDebugVisible(!bCollisionDebugVisible);
+}
+
+void AFireFighter::SetCollisionDebugVisible(bool bVisible)
+{
+	bCollisionDebugVisible = bVisible;
+	if (UWorld* World = GetWorld())
 	{
-		FireManager->ToggleFireCollision();
+		if (UGameViewportClient* Viewport = World->GetGameViewport())
+		{
+			Viewport->EngineShowFlags.SetCollision(bVisible);
+		}
 	}
+
+#if ENABLE_DRAW_DEBUG
+	if (IConsoleVariable* DrawSpray = IConsoleManager::Get().FindConsoleVariable(TEXT("ffs.DebugSpray")))
+	{
+		DrawSpray->Set(bVisible ? 1 : 0, ECVF_SetByCode);
+	}
+#endif
+
+	UE_LOG(LogTemp, Log, TEXT("Collision debug drawing: %s"), bVisible ? TEXT("On") : TEXT("Off"));
 }
 
 void AFireFighter::DestroyPlayerInputComponent()

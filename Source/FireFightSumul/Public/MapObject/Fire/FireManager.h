@@ -30,6 +30,8 @@ public:
 	void RegisterFire(AFireActor& Fire);
 	void NotifyFireExtinguished();
 	void NotifyPlayerEvacuated();
+	bool CanScheduleReignition(float DefaultChance) const;
+	bool ShouldReignite(float DefaultChance);
 
 	UFUNCTION(BlueprintCallable, Category = "Fire Training")
 	void RequireEvacuation();
@@ -52,6 +54,7 @@ private:
 	EFireClass ResolveFireClass(FName MaterialTag) const;
 	AFireSpreadAnchor* FindClosestSpreadAnchor(const FVector& Location, float MaxDistanceCm) const;
 	bool HasAnyBurningFire() const;
+	bool IsTrashBinScenario() const;
 	void FinishTraining(ETrainingOutcome Outcome,
 		ETrainingFailureReason FailureReason = ETrainingFailureReason::None);
 	bool IgnitePoint(const ATargetPoint& Point, float InitialIntensityRatio);
@@ -64,6 +67,7 @@ private:
 	bool bTrainingWorld = false;
 	bool bTrainingFinished = false;
 	bool bScenarioStarted = false;
+	bool bTrashBinGuaranteedReignitionUsed = false;
 	EFireScenarioState ScenarioState = EFireScenarioState::None;
 	FVector InitialFireLocation = FVector::ZeroVector;
 	int32 SpreadIgnitionCount = 0;

@@ -13,6 +13,7 @@
 namespace
 {
 	constexpr float InitialAnchorMatchDistanceCm = 100.0f;
+	const FName TrashBinScenarioId(TEXT("TrashBin"));
 }
 
 void UFireManager::ToggleFireCollision()
@@ -32,6 +33,7 @@ void UFireManager::OnWorldBeginPlay(UWorld& InWorld)
 	bTrainingWorld = false;
 	bTrainingFinished = false;
 	bScenarioStarted = false;
+	bTrashBinGuaranteedReignitionUsed = false;
 	ScenarioState = EFireScenarioState::None;
 	ActiveScenarioData = nullptr;
 }
@@ -61,6 +63,7 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 	bTrainingWorld = true;
 	bTrainingFinished = false;
 	bScenarioStarted = true;
+	bTrashBinGuaranteedReignitionUsed = false;
 	ScenarioState = EFireScenarioState::Ready;
 
 	const float InitialIntensity = FMath::Clamp(InScenarioData->InitialFireIntensityRatio, 0.01f, 1.0f);
@@ -84,6 +87,38 @@ bool UFireManager::StartScenario(UFireScenarioDataAsset* InScenarioData)
 		InScenarioData->StartSelectionMode == EFireStartSelectionMode::Random
 			? TEXT("Random") : TEXT("Fixed"));
 	return true;
+}
+
+bool UFireManager::CanScheduleReignition(float DefaultChance) const
+{
+	if (IsTrashBinScenario())
+	{
+		return !bTrashBinGuaranteedReignitionUsed;
+	}
+
+	return DefaultChance > 0.0f;
+}
+
+bool UFireManager::ShouldReignite(float DefaultChance)
+{
+	if (IsTrashBinScenario())
+	{
+		if (bTrashBinGuaranteedReignitionUsed)
+		{
+			return false;
+		}
+
+		bTrashBinGuaranteedReignitionUsed = true;
+		UE_LOG(LogTemp, Log, TEXT("TrashBin scenario consumed its guaranteed reignition."));
+		return true;
+	}
+
+	return FMath::FRand() < FMath::Clamp(DefaultChance, 0.0f, 1.0f);
+}
+
+bool UFireManager::IsTrashBinScenario() const
+{
+	return ActiveScenarioData && ActiveScenarioData->ScenarioId == TrashBinScenarioId;
 }
 
 ATargetPoint* UFireManager::SelectStartPoint(const UFireScenarioDataAsset& ScenarioData) const
@@ -567,6 +602,7 @@ void UFireManager::Deinitialize()
 	bTrainingWorld = false;
 	bTrainingFinished = false;
 	bScenarioStarted = false;
+	bTrashBinGuaranteedReignitionUsed = false;
 	ScenarioState = EFireScenarioState::None;
 	Super::Deinitialize();
 }

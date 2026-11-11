@@ -53,6 +53,16 @@ void AFireActor::BeginPlay()
 	SetActorTickEnabled(InitialIntensityRatio < 1.0f && RecoveryRate > 0.0f);
 }
 
+void AFireActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReignitionTimer);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void AFireActor::SetInitialIntensityRatio(float Ratio)
 {
 	InitialIntensityRatio = FMath::Clamp(Ratio, 0.01f, 1.0f);
@@ -109,7 +119,7 @@ void AFireActor::Tick(float DeltaSeconds)
 
 void AFireActor::SetIntensity(float NewIntensity)
 {
-	constexpr float FireEmitterCutoff = 0.25f;
+	constexpr float FireEmitterCutoff = 0.0f;
 	const bool bWasBurning = CurrentIntensity > 0.0f;
 	const bool bWasFireEmitterEnabled = GetIntensityRatio() > FireEmitterCutoff;
 	const float IntensityLimit = FMath::Max(1.0f, MaxIntensity);
@@ -123,6 +133,20 @@ void AFireActor::SetIntensity(float NewIntensity)
 	}
 	else
 	{
+		if (!bWasBurning)
+		{
+			GetWorld()->GetTimerManager().ClearTimer(ReignitionTimer);
+			FireEffect->Activate(true);
+			if (const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
+			{
+				SetAimCollisionEnabled(FireManager->IsFireCollisionEnabled());
+			}
+			else
+			{
+				SetAimCollisionEnabled(true);
+			}
+		}
+
 		const float IntensityRatio = GetIntensityRatio();
 		const bool bEnableFireEmitter = IntensityRatio > FireEmitterCutoff;
 		if (bWasFireEmitterEnabled != bEnableFireEmitter)
@@ -142,9 +166,66 @@ void AFireActor::SetIntensity(float NewIntensity)
 	OnIntensityChanged.Broadcast(GetIntensityRatio());
 	if (bWasBurning && CurrentIntensity == 0.0f)
 	{
+		ScheduleReignition();
 		if (UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
 		{
 			FireManager->NotifyFireExtinguished();
 		}
 	}
+}
+
+void AFireActor::ScheduleReignition()
+{
+	if (const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
+	{
+		if (!FireManager->CanScheduleReignition(ReignitionChance))
+		{
+			return;
+		}
+	}
+	else if (ReignitionChance <= 0.0f)
+	{
+		return;
+	}
+
+	GetWorld()->GetTimerManager().SetTimer(ReignitionTimer, this,
+		&AFireActor::TryReignite, FMath::Max(0.1f, ReignitionDelay), false);
+}
+
+void AFireActor::TryReignite()
+{
+	if (CurrentIntensity > 0.0f)
+	{
+		return;
+	}
+
+	UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>();
+	if (FireManager)
+	{
+		const EFireScenarioState ScenarioState = FireManager->GetScenarioState();
+		if (FireManager->HasFinishedTraining() ||
+			ScenarioState == EFireScenarioState::EvacuationRequired ||
+			ScenarioState == EFireScenarioState::Completed)
+		{
+			return;
+		}
+	}
+
+	const bool bShouldReignite = FireManager
+		? FireManager->ShouldReignite(ReignitionChance)
+		: FMath::FRand() < FMath::Clamp(ReignitionChance, 0.0f, 1.0f);
+	if (!bShouldReignite)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Fire %s did not reignite."), *GetName());
+		return;
+	}
+
+	RecoveryStartTime = GetWorld()->GetTimeSeconds();
+	const float StartIntensity = FMath::Max(1.0f, MaxIntensity) *
+		FMath::Clamp(ReignitionStartRatio, 0.01f, 1.0f);
+	SetIntensity(StartIntensity);
+	SetActorTickEnabled(RecoveryRate > 0.0f);
+
+	UE_LOG(LogTemp, Log, TEXT("Fire %s reignited at %.1f%% intensity."),
+		*GetName(), GetIntensityRatio() * 100.0f);
 }

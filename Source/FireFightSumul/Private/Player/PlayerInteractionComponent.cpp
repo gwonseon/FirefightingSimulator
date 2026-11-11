@@ -30,7 +30,7 @@ namespace
 
 #if ENABLE_DRAW_DEBUG
 	TAutoConsoleVariable<int32> CVarDrawSpray(
-		TEXT("ffs.DebugSpray"), 1, TEXT("Draw the spray cone and fire collision spheres while spraying."));
+		TEXT("ffs.DebugSpray"), 0, TEXT("Draw the spray cone and fire collision spheres while spraying."));
 #endif
 }
 

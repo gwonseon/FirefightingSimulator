@@ -7,6 +7,8 @@
 class UBorder;
 class UImage;
 class UProgressBar;
+class USizeBox;
+class USpacer;
 class UTextBlock;
 
 UCLASS(Abstract, Blueprintable)
@@ -21,6 +23,8 @@ public:
 	void SetFireStatus(float IntensityRatio);
 	void ShowFireExtinguished();
 	void HideFireStatus();
+	void ShowFireUncontrollable();
+	void ResetFireUncontrollable();
 	void SetExtinguisherStatus(bool bVisible, float AgentRatio);
 	void SetTrainingObjective(const FText& Objective);
 	void ShowActionHint(const FText& Hint, bool bShowCancel);
@@ -42,10 +46,22 @@ private:
 	TObjectPtr<UTextBlock> FirePercentText;
 
 	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UBorder> FireUncontrollablePanel;
+
+	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UBorder> ExtinguisherStatusPanel;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UProgressBar> ExtinguisherChargeBar;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<USpacer> ExtinguisherBodyLeftSpacer;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<USizeBox> ExtinguisherGaugeBox;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<USpacer> ExtinguisherGaugePercentSpacer;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> ExtinguisherPercentText;
@@ -70,4 +86,6 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> TrainingFeedbackText;
+
+	bool bFireUncontrollable = false;
 };

@@ -36,10 +36,13 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
 private:
 	void SetIntensity(float NewIntensity);
+	void ScheduleReignition();
+	void TryReignite();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fire", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UNiagaraComponent> FireEffect;
@@ -60,6 +63,17 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Fire|Recovery", meta = (ClampMin = "0.0"))
 	float RecoveryRate = 10.0f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Fire|Reignition", meta = (ClampMin = "0.1", Units = "s"))
+	float ReignitionDelay = 3.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Fire|Reignition",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float ReignitionChance = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Fire|Reignition",
+		meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float ReignitionStartRatio = 0.01f;
+
 	UPROPERTY(VisibleInstanceOnly, Category = "Fire")
 	float CurrentIntensity = 0.0f;
 
@@ -67,4 +81,5 @@ private:
 	double LastSuppressionTime = 0.0;
 	double RecoveryStartTime = 0.0;
 	FVector InitialEffectScale = FVector::OneVector;
+	FTimerHandle ReignitionTimer;
 };

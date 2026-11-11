@@ -49,7 +49,8 @@ private:
 	void StartSprint();
 	void StopSprint();
 	void StartJump();
-	void ToggleFireCollision();
+	void ToggleCollisionDebug();
+	void SetCollisionDebugVisible(bool bVisible);
 
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
@@ -83,6 +84,7 @@ private:
 
 	float WalkSpeedBeforeSprint = 0.0f;
 	bool bIsSprinting = false;
+	bool bCollisionDebugVisible = false;
 	TSet<FName> OwnedKeyIds;
 
 	UPROPERTY(Transient)

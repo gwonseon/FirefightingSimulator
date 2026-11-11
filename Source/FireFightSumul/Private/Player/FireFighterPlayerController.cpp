@@ -73,13 +73,17 @@ void AFireFighterPlayerController::BeginPlay()
 	}
 
 	HUDWidget->SetCrosshairVisible(true);
-	HUDWidget->HideFireStatus();
+	HUDWidget->ResetFireUncontrollable();
 	HUDWidget->HideActionHint();
 	HUDWidget->HideTrainingFeedback();
 	if (UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
 	{
 		FireManager->OnScenarioFeedbackRequested.AddUObject(
 			this, &AFireFighterPlayerController::HandleScenarioFeedbackRequested);
+		if (FireManager->GetScenarioState() == EFireScenarioState::EvacuationRequired)
+		{
+			HUDWidget->ShowFireUncontrollable();
+		}
 	}
 	OnPossessedPawnChanged.AddDynamic(this, &AFireFighterPlayerController::HandleControlledPawnChanged);
 	HandleControlledPawnChanged(nullptr, GetPawn());
@@ -325,6 +329,12 @@ void AFireFighterPlayerController::HandleScenarioFeedbackRequested(ETrainingFeed
 	if (!HUDWidget || !GetWorld())
 	{
 		return;
+	}
+
+	if (Type == ETrainingFeedbackType::EvacuateNow)
+	{
+		GetWorldTimerManager().ClearTimer(FireCompletionTimer);
+		HUDWidget->ShowFireUncontrollable();
 	}
 
 	const FText Message = GetTrainingFeedbackText(Type);

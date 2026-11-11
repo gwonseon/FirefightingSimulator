@@ -3,6 +3,8 @@
 #include "Components/Border.h"
 #include "Components/Image.h"
 #include "Components/ProgressBar.h"
+#include "Components/SizeBox.h"
+#include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 
 void UHUDWidget::SetCrosshairVisible(bool bVisible)
@@ -14,6 +16,11 @@ void UHUDWidget::SetCrosshairVisible(bool bVisible)
 
 void UHUDWidget::SetFireStatus(float IntensityRatio)
 {
+	if (bFireUncontrollable)
+	{
+		return;
+	}
+
 	const float Ratio = FMath::Clamp(IntensityRatio, 0.0f, 1.0f);
 	FNumberFormattingOptions PercentFormat;
 	PercentFormat.SetMaximumFractionalDigits(0);
@@ -25,6 +32,11 @@ void UHUDWidget::SetFireStatus(float IntensityRatio)
 
 void UHUDWidget::ShowFireExtinguished()
 {
+	if (bFireUncontrollable)
+	{
+		return;
+	}
+
 	FirePercentText->SetText(NSLOCTEXT("FireHUD", "Extinguished", "진압 완료"));
 	FireIntensityBar->SetVisibility(ESlateVisibility::Collapsed);
 	FireStatusPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -32,7 +44,26 @@ void UHUDWidget::ShowFireExtinguished()
 
 void UHUDWidget::HideFireStatus()
 {
+	if (bFireUncontrollable)
+	{
+		return;
+	}
+
 	FireStatusPanel->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UHUDWidget::ShowFireUncontrollable()
+{
+	bFireUncontrollable = true;
+	FireStatusPanel->SetVisibility(ESlateVisibility::Collapsed);
+	FireUncontrollablePanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UHUDWidget::ResetFireUncontrollable()
+{
+	bFireUncontrollable = false;
+	FireStatusPanel->SetVisibility(ESlateVisibility::Collapsed);
+	FireUncontrollablePanel->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UHUDWidget::SetExtinguisherStatus(bool bVisible, float AgentRatio)
@@ -44,6 +75,14 @@ void UHUDWidget::SetExtinguisherStatus(bool bVisible, float AgentRatio)
 	}
 
 	const float Ratio = FMath::Clamp(AgentRatio, 0.0f, 1.0f);
+	const bool bEmpty = Ratio <= KINDA_SMALL_NUMBER;
+	const ESlateVisibility GaugeVisibility = bEmpty
+		? ESlateVisibility::Collapsed
+		: ESlateVisibility::HitTestInvisible;
+	ExtinguisherBodyLeftSpacer->SetVisibility(GaugeVisibility);
+	ExtinguisherGaugeBox->SetVisibility(GaugeVisibility);
+	ExtinguisherGaugePercentSpacer->SetVisibility(GaugeVisibility);
+
 	const FLinearColor Green = FLinearColor::FromSRGBColor(FColor(53, 200, 90));
 	const FLinearColor Orange = FLinearColor::FromSRGBColor(FColor(255, 152, 31));
 	const FLinearColor Red = FLinearColor::FromSRGBColor(FColor(240, 68, 68));
@@ -55,7 +94,7 @@ void UHUDWidget::SetExtinguisherStatus(bool bVisible, float AgentRatio)
 
 	FNumberFormattingOptions PercentFormat;
 	PercentFormat.SetMaximumFractionalDigits(0);
-	ExtinguisherPercentText->SetText(Ratio > 0.0f
+	ExtinguisherPercentText->SetText(!bEmpty
 		? FText::AsPercent(Ratio, &PercentFormat)
 		: NSLOCTEXT("ExtinguisherHUD", "Empty", "약제 없음"));
 	ExtinguisherChargeBar->SetPercent(Ratio);

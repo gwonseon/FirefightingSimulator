@@ -3,6 +3,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "MapObject/Fire/FireActor.h"
+#include "MapObject/Fire/FireManager.h"
 #include "MapObjects/LockableDoor.h"
 #include "MapObjects/WorldExtinguisher.h"
 #include "Player/FireFighter.h"
@@ -11,6 +12,45 @@
 #include "UI/HUDWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExtinguisherInspection, Log, All);
+
+namespace
+{
+	const FName TrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
+	constexpr double FeedbackHoldSeconds = 0.5;
+	constexpr float FeedbackDisplaySeconds = 2.0f;
+	constexpr double FeedbackCooldownSeconds = 3.0;
+
+	FText GetTrainingFeedbackText(ETrainingFeedbackType Type)
+	{
+		switch (Type)
+		{
+		case ETrainingFeedbackType::TooClose:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.TooClose"));
+		case ETrainingFeedbackType::TooFar:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.TooFar"));
+		case ETrainingFeedbackType::AimTooHigh:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.AimTooHigh"));
+		case ETrainingFeedbackType::OffCenter:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.OffCenter"));
+		case ETrainingFeedbackType::Occluded:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Occluded"));
+		case ETrainingFeedbackType::ExtinguisherLow:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.ExtinguisherLow"));
+		case ETrainingFeedbackType::ExtinguisherEmpty:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.ExtinguisherEmpty"));
+		case ETrainingFeedbackType::EvacuateNow:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.EvacuateNow"));
+		case ETrainingFeedbackType::GoodAim:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.GoodAim"));
+		case ETrainingFeedbackType::Reignited:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Reignited"));
+		case ETrainingFeedbackType::Monitoring:
+			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Monitoring"));
+		default:
+			return FText::GetEmpty();
+		}
+	}
+}
 
 void AFireFighterPlayerController::BeginPlay()
 {
@@ -31,6 +71,12 @@ void AFireFighterPlayerController::BeginPlay()
 	HUDWidget->SetCrosshairVisible(true);
 	HUDWidget->HideFireStatus();
 	HUDWidget->HideActionHint();
+	HUDWidget->HideTrainingFeedback();
+	if (UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
+	{
+		FireManager->OnScenarioFeedbackRequested.AddUObject(
+			this, &AFireFighterPlayerController::HandleScenarioFeedbackRequested);
+	}
 	OnPossessedPawnChanged.AddDynamic(this, &AFireFighterPlayerController::HandleControlledPawnChanged);
 	HandleControlledPawnChanged(nullptr, GetPawn());
 	RefreshFocusedTarget();
@@ -144,8 +190,8 @@ void AFireFighterPlayerController::UpdateExtinguisherPinDrag()
 	}
 
 	bRestoreHoseAfterInspection = false;
-	UE_LOG(LogExtinguisherInspection, Log, TEXT("ExtinguisherEquipped: Extinguisher=%s RemainingAgent=%.1f"),
-		*GetNameSafe(InspectedExtinguisher), InspectedExtinguisher->GetRemainingAgent());
+	UE_LOG(LogExtinguisherInspection, Log, TEXT("ExtinguisherEquipped: Extinguisher=%s RemainingAgentKg=%.2f"),
+		*GetNameSafe(InspectedExtinguisher), InspectedExtinguisher->GetRemainingAgentKg());
 	EndExtinguisherInspection();
 }
 
@@ -205,7 +251,9 @@ void AFireFighterPlayerController::HandleControlledPawnChanged(APawn* /*OldPawn*
 	if (UPlayerInteractionComponent* PreviousSource = ExtinguisherStatusSource.Get())
 	{
 		PreviousSource->OnExtinguisherStatusChanged.RemoveAll(this);
+		PreviousSource->OnTrainingFeedbackSampled.RemoveAll(this);
 	}
+	ResetTrainingFeedbackState();
 
 	UPlayerInteractionComponent* NewSource = NewPawn
 		? NewPawn->FindComponentByClass<UPlayerInteractionComponent>() : nullptr;
@@ -214,9 +262,90 @@ void AFireFighterPlayerController::HandleControlledPawnChanged(APawn* /*OldPawn*
 	{
 		NewSource->OnExtinguisherStatusChanged.AddUObject(
 			this, &AFireFighterPlayerController::HandleExtinguisherStatusChanged);
+		NewSource->OnTrainingFeedbackSampled.AddUObject(
+			this, &AFireFighterPlayerController::HandleTrainingFeedbackSampled);
 	}
 
 	RefreshExtinguisherStatus();
+}
+
+void AFireFighterPlayerController::HandleTrainingFeedbackSampled(ETrainingFeedbackType Type)
+{
+	if (!HUDWidget || !GetWorld())
+	{
+		return;
+	}
+
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Type == ETrainingFeedbackType::None)
+	{
+		PendingFeedbackType = ETrainingFeedbackType::None;
+		PendingFeedbackSince = 0.0;
+		return;
+	}
+
+	if (PendingFeedbackType != Type)
+	{
+		PendingFeedbackType = Type;
+		PendingFeedbackSince = Now;
+	}
+
+	const double RequiredHoldSeconds = Type == ETrainingFeedbackType::ExtinguisherEmpty
+		? 0.0 : FeedbackHoldSeconds;
+	if (Now - PendingFeedbackSince < RequiredHoldSeconds)
+	{
+		return;
+	}
+
+	if (const double* CooldownUntil = FeedbackCooldownUntil.Find(Type);
+		CooldownUntil && Now < *CooldownUntil)
+	{
+		return;
+	}
+
+	const FText Message = GetTrainingFeedbackText(Type);
+	if (Message.IsEmpty())
+	{
+		return;
+	}
+
+	HUDWidget->ShowTrainingFeedback(Message, Type == ETrainingFeedbackType::GoodAim);
+	FeedbackCooldownUntil.Add(Type, Now + FeedbackCooldownSeconds);
+	PendingFeedbackSince = Now;
+	GetWorldTimerManager().SetTimer(FeedbackHideTimer, HUDWidget.Get(),
+		&UHUDWidget::HideTrainingFeedback, FeedbackDisplaySeconds, false);
+}
+
+void AFireFighterPlayerController::HandleScenarioFeedbackRequested(ETrainingFeedbackType Type)
+{
+	if (!HUDWidget || !GetWorld())
+	{
+		return;
+	}
+
+	const FText Message = GetTrainingFeedbackText(Type);
+	if (Message.IsEmpty())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(FeedbackHideTimer);
+	HUDWidget->ShowTrainingFeedback(Message, Type == ETrainingFeedbackType::Monitoring);
+	constexpr float ScenarioFeedbackDisplaySeconds = 3.0f;
+	GetWorldTimerManager().SetTimer(FeedbackHideTimer, HUDWidget.Get(),
+		&UHUDWidget::HideTrainingFeedback, ScenarioFeedbackDisplaySeconds, false);
+}
+
+void AFireFighterPlayerController::ResetTrainingFeedbackState()
+{
+	PendingFeedbackType = ETrainingFeedbackType::None;
+	PendingFeedbackSince = 0.0;
+	FeedbackCooldownUntil.Reset();
+	GetWorldTimerManager().ClearTimer(FeedbackHideTimer);
+	if (HUDWidget)
+	{
+		HUDWidget->HideTrainingFeedback();
+	}
 }
 
 void AFireFighterPlayerController::RefreshExtinguisherStatus()
@@ -268,6 +397,21 @@ void AFireFighterPlayerController::UpdateDoorPrompt(ALockableDoor* Door, const A
 void AFireFighterPlayerController::RefreshTrainingGuidance(const AActor* Target)
 {
 	const double Now = GetWorld()->GetTimeSeconds();
+	if (const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>())
+	{
+		if (FireManager->GetScenarioState() == EFireScenarioState::ExtinguishmentMonitoring)
+		{
+			HUDWidget->SetTrainingObjective(GetTrainingFeedbackText(ETrainingFeedbackType::Monitoring));
+			SetActionHint(EActionHint::None);
+			return;
+		}
+		if (FireManager->GetScenarioState() == EFireScenarioState::EvacuationRequired)
+		{
+			HUDWidget->SetTrainingObjective(GetTrainingFeedbackText(ETrainingFeedbackType::EvacuateNow));
+			SetActionHint(EActionHint::None);
+			return;
+		}
+	}
 	if (IsInspectingExtinguisher())
 	{
 		HUDWidget->SetTrainingObjective(NSLOCTEXT("TrainingHUD", "RemovePin", "소화기의 안전핀을 제거하세요."));
@@ -404,12 +548,20 @@ void AFireFighterPlayerController::HandleFireIntensityChanged(float IntensityRat
 
 void AFireFighterPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* World = GetWorld())
+	{
+		if (UFireManager* FireManager = World->GetSubsystem<UFireManager>())
+		{
+			FireManager->OnScenarioFeedbackRequested.RemoveAll(this);
+		}
+	}
 	OnPossessedPawnChanged.RemoveDynamic(this, &AFireFighterPlayerController::HandleControlledPawnChanged);
 	HandleControlledPawnChanged(GetPawn(), nullptr);
 	EndExtinguisherInspection();
 	GetWorldTimerManager().ClearTimer(AimFocusTimer);
 	UpdateDoorPrompt(nullptr, nullptr);
 	GetWorldTimerManager().ClearTimer(FireCompletionTimer);
+	GetWorldTimerManager().ClearTimer(FeedbackHideTimer);
 	if (AFireActor* Fire = FocusedFire.Get())
 	{
 		Fire->OnIntensityChanged.RemoveAll(this);

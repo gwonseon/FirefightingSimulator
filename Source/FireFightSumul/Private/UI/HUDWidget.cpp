@@ -86,3 +86,24 @@ void UHUDWidget::HideActionHint()
 {
 	ActionHintPanel->SetVisibility(ESlateVisibility::Collapsed);
 }
+
+void UHUDWidget::ShowTrainingFeedback(const FText& Message, bool bPositive)
+{
+	if (!TrainingFeedbackPanel || !TrainingFeedbackText)
+	{
+		return;
+	}
+
+	static_cast<void>(bPositive);
+	TrainingFeedbackText->SetText(Message);
+	TrainingFeedbackText->SetColorAndOpacity(FLinearColor::White);
+	TrainingFeedbackPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UHUDWidget::HideTrainingFeedback()
+{
+	if (TrainingFeedbackPanel)
+	{
+		TrainingFeedbackPanel->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}

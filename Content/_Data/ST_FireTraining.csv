@@ -1,0 +1,20 @@
+Key,SourceString
+"Feedback.TooClose","불과 너무 가깝습니다.
+뒤로 물러나세요."
+"Feedback.TooFar","유효 방사 거리 안으로 이동하세요."
+"Feedback.AimTooHigh","불꽃 위쪽이 아닌 연소물의 밑부분을 조준하세요."
+"Feedback.OffCenter","분사 중심을 불의 밑부분에 맞추세요."
+"Feedback.Occluded","장애물에 막혀 소화약제가 도달하지 않습니다."
+"Feedback.ExtinguisherLow","소화기 잔량이 얼마 남지 않았습니다."
+"Feedback.ExtinguisherEmpty","소화기가 비었습니다.
+즉시 대피하세요."
+"Feedback.EvacuateNow","가정용 소화기로 진압하기 어렵습니다.
+즉시 대피하세요."
+"Feedback.GoodAim","불의 밑부분을 올바르게 조준하고 있습니다."
+"Feedback.Monitoring","재발화 여부를 확인하세요."
+"Feedback.Reignited","잔불이 다시 타오르고 있습니다."
+"Result.Extinguished","초기 진압 성공"
+"Result.Evacuated","안전 대피 성공"
+"Result.FailedDangerZone","불꽃의 직접 위험 구역에 진입했습니다."
+"Result.FailedEvacuation","대피 지시를 따르지 않았습니다."
+"Result.FailedTimeout","제한시간 안에 진압하거나 대피하지 못했습니다."

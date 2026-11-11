@@ -25,6 +25,8 @@ public:
 	void SetTrainingObjective(const FText& Objective);
 	void ShowActionHint(const FText& Hint, bool bShowCancel);
 	void HideActionHint();
+	void ShowTrainingFeedback(const FText& Message, bool bPositive);
+	void HideTrainingFeedback();
 
 private:
 	UPROPERTY(meta = (BindWidget))
@@ -62,4 +64,10 @@ private:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> CancelHintText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> TrainingFeedbackPanel;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> TrainingFeedbackText;
 };

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/TimerHandle.h"
 #include "GameFramework/PlayerController.h"
+#include "Training/FireTrainingTypes.h"
 #include "FireFighterPlayerController.generated.h"
 
 class AFireActor;
@@ -47,6 +48,9 @@ private:
 	void HandleFireIntensityChanged(float IntensityRatio);
 	void RefreshExtinguisherStatus();
 	void HandleExtinguisherStatusChanged(bool bEquipped, float AgentRatio);
+	void HandleTrainingFeedbackSampled(ETrainingFeedbackType Type);
+	void HandleScenarioFeedbackRequested(ETrainingFeedbackType Type);
+	void ResetTrainingFeedbackState();
 
 	UFUNCTION()
 	void HandleControlledPawnChanged(APawn* OldPawn, APawn* NewPawn);
@@ -65,14 +69,18 @@ private:
 	double PinDragScreenDistance = 0.0;
 
 	EActionHint ActiveActionHint = EActionHint::None;
+	ETrainingFeedbackType PendingFeedbackType = ETrainingFeedbackType::None;
 	bool bLookingForAnotherFire = false;
 	double SprayHintUntil = 0.0;
+	double PendingFeedbackSince = 0.0;
+	TMap<ETrainingFeedbackType, double> FeedbackCooldownUntil;
 	TWeakObjectPtr<const AWorldExtinguisher> LastGuidedExtinguisher;
 	TWeakObjectPtr<UPlayerInteractionComponent> ExtinguisherStatusSource;
 	TWeakObjectPtr<AFireActor> FocusedFire;
 	TWeakObjectPtr<ALockableDoor> FocusedDoor;
 	FTimerHandle AimFocusTimer;
 	FTimerHandle FireCompletionTimer;
+	FTimerHandle FeedbackHideTimer;
 
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	TSubclassOf<UHUDWidget> HUDWidgetClass;

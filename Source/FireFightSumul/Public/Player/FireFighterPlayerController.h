@@ -43,6 +43,8 @@ private:
 
 	void RefreshFocusedTarget();
 	void RefreshTrainingGuidance(const AActor* Target);
+	bool RefreshOutsideEntryGuidance(const AActor* Target);
+	ALockableDoor* ResolveOutsideEntryDoor();
 	void SetActionHint(EActionHint Hint);
 	void UpdateDoorPrompt(ALockableDoor* Door, const AFireFighter* PlayerPawn);
 	void HandleFireIntensityChanged(float IntensityRatio);
@@ -78,6 +80,9 @@ private:
 	TWeakObjectPtr<UPlayerInteractionComponent> ExtinguisherStatusSource;
 	TWeakObjectPtr<AFireActor> FocusedFire;
 	TWeakObjectPtr<ALockableDoor> FocusedDoor;
+	TWeakObjectPtr<ALockableDoor> OutsideEntryDoor;
+	bool bOutsideEntryDoorSearchAttempted = false;
+	bool bOutsideEntryGuidanceComplete = false;
 	FTimerHandle AimFocusTimer;
 	FTimerHandle FireCompletionTimer;
 	FTimerHandle FeedbackHideTimer;

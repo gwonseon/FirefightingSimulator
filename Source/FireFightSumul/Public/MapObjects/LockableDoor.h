@@ -27,6 +27,9 @@ public:
 
 	bool CanToggleLock(const AFireFighter& Player) const;
 	void UpdateInteractionPrompt(const AFireFighter* Player);
+	FName GetRequiredKeyId() const { return RequiredKeyId; }
+	bool IsLocked() const { return bIsLocked; }
+	bool IsOpen() const { return bIsOpen; }
 
 protected:
 	virtual void BeginPlay() override;

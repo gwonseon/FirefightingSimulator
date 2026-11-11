@@ -1,5 +1,7 @@
 #include "Player/FireFighterPlayerController.h"
 
+#include "Data/FireScenarioDataAsset.h"
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "MapObject/Fire/FireActor.h"
@@ -12,10 +14,13 @@
 #include "UI/HUDWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogExtinguisherInspection, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogTrainingGuidance, Log, All);
 
 namespace
 {
 	const FName PlayerTrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
+	const FName OutsideScenarioId(TEXT("Outside"));
+	const FName OutsideEntryDoorTag(TEXT("ScenarioEntryDoor.Outside"));
 	constexpr double FeedbackHoldSeconds = 0.5;
 	constexpr float FeedbackDisplaySeconds = 2.0f;
 	constexpr double FeedbackCooldownSeconds = 3.0;
@@ -53,6 +58,11 @@ namespace
 		default:
 			return FText::GetEmpty();
 		}
+	}
+
+	FText GetOutsideObjectiveText(const TCHAR* Key)
+	{
+		return FText::FromStringTable(PlayerTrainingStringTableId, Key);
 	}
 }
 
@@ -408,6 +418,79 @@ void AFireFighterPlayerController::UpdateDoorPrompt(ALockableDoor* Door, const A
 	}
 }
 
+ALockableDoor* AFireFighterPlayerController::ResolveOutsideEntryDoor()
+{
+	if (ALockableDoor* CachedDoor = OutsideEntryDoor.Get())
+	{
+		return CachedDoor;
+	}
+	if (bOutsideEntryDoorSearchAttempted)
+	{
+		return nullptr;
+	}
+	bOutsideEntryDoorSearchAttempted = true;
+
+	for (TActorIterator<ALockableDoor> It(GetWorld()); It; ++It)
+	{
+		if (It->ActorHasTag(OutsideEntryDoorTag))
+		{
+			OutsideEntryDoor = *It;
+			return *It;
+		}
+	}
+
+	UE_LOG(LogTrainingGuidance, Warning,
+		TEXT("Outside scenario entry door was not found. Add Actor Tag '%s' to the front door."),
+		*OutsideEntryDoorTag.ToString());
+	return nullptr;
+}
+
+bool AFireFighterPlayerController::RefreshOutsideEntryGuidance(const AActor* Target)
+{
+	const UFireManager* FireManager = GetWorld()->GetSubsystem<UFireManager>();
+	const UFireScenarioDataAsset* ScenarioData = FireManager
+		? FireManager->GetActiveScenarioData() : nullptr;
+	if (!ScenarioData || ScenarioData->ScenarioId != OutsideScenarioId || bOutsideEntryGuidanceComplete)
+	{
+		return false;
+	}
+
+	ALockableDoor* EntryDoor = ResolveOutsideEntryDoor();
+	const AFireFighter* PlayerPawn = Cast<AFireFighter>(GetPawn());
+	if (!EntryDoor || !PlayerPawn)
+	{
+		return false;
+	}
+
+	if (EntryDoor->IsLocked())
+	{
+		const FName RequiredKeyId = EntryDoor->GetRequiredKeyId();
+		const bool bHasRequiredKey = !RequiredKeyId.IsNone() && PlayerPawn->HasKey(RequiredKeyId);
+		HUDWidget->SetTrainingObjective(GetOutsideObjectiveText(bHasRequiredKey
+			? TEXT("Objective.Outside.UnlockDoor")
+			: TEXT("Objective.Outside.FindKey")));
+		SetActionHint(EActionHint::None);
+		return true;
+	}
+
+	if (!EntryDoor->IsOpen())
+	{
+		HUDWidget->SetTrainingObjective(GetOutsideObjectiveText(TEXT("Objective.Outside.OpenDoor")));
+		SetActionHint(EActionHint::None);
+		return true;
+	}
+
+	if (Cast<AFireActor>(Target) || Cast<AWorldExtinguisher>(Target))
+	{
+		bOutsideEntryGuidanceComplete = true;
+		return false;
+	}
+
+	HUDWidget->SetTrainingObjective(GetOutsideObjectiveText(TEXT("Objective.Outside.EnterHouse")));
+	SetActionHint(EActionHint::None);
+	return true;
+}
+
 void AFireFighterPlayerController::RefreshTrainingGuidance(const AActor* Target)
 {
 	const double Now = GetWorld()->GetTimeSeconds();
@@ -425,6 +508,10 @@ void AFireFighterPlayerController::RefreshTrainingGuidance(const AActor* Target)
 			SetActionHint(EActionHint::None);
 			return;
 		}
+	}
+	if (RefreshOutsideEntryGuidance(Target))
+	{
+		return;
 	}
 	if (IsInspectingExtinguisher())
 	{

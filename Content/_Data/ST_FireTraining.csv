@@ -31,3 +31,11 @@ Key,SourceString
 "Result.Label.FailureTime","실패 시점"
 "Result.Label.AgentUsed","약제 사용량"
 "Result.Value.AgentKg","{0} kg"
+"Objective.Outside.FindKey","화재가 발생했습니다.
+주변에서 현관 열쇠를 찾으세요."
+"Objective.Outside.UnlockDoor","열쇠를 찾았습니다.
+현관문을 조준하고 E키로 잠금을 해제하세요."
+"Objective.Outside.OpenDoor","현관문의 잠금이 해제되었습니다.
+마우스 오른쪽 버튼으로 문을 여세요."
+"Objective.Outside.EnterHouse","문이 열렸습니다.
+안으로 들어가 화재 위치를 확인하세요."

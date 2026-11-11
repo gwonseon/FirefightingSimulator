@@ -17,6 +17,8 @@
 #include "InputMappingContext.h"
 #include "InputModifiers.h"
 #include "MapObject/Fire/FireManager.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "Player/PlayerInteractionComponent.h"
 
 namespace
@@ -32,6 +34,9 @@ AFireFighter::AFireFighter()
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	NozzleTip = CreateDefaultSubobject<USceneComponent>(TEXT("NozzleTip"));
 	NozzleTip->SetupAttachment(FirstPersonCamera);
+	SprayEffectComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("SprayEffectComponent"));
+	SprayEffectComponent->SetupAttachment(NozzleTip);
+	SprayEffectComponent->SetAutoActivate(false);
 	InteractionComponent = CreateDefaultSubobject<UPlayerInteractionComponent>(TEXT("InteractionComponent"));
 
 	bUseControllerRotationPitch = false;
@@ -45,12 +50,53 @@ AFireFighter::AFireFighter()
 void AFireFighter::BeginPlay()
 {
 	Super::BeginPlay();
+	SprayEffectComponent->SetRelativeScale3D(
+		FVector(1.0f, SprayVisualWidthScale, SprayVisualWidthScale));
 	SetHoseEquipped(false);
 }
 
 const USceneComponent* AFireFighter::GetEquippedNozzle() const
 {
 	return EquippedHose.IsValid() ? NozzleTip.Get() : nullptr;
+}
+
+void AFireFighter::StartSprayEffect(UNiagaraSystem* System, float Strength)
+{
+	if (!SprayEffectComponent || !System)
+	{
+		return;
+	}
+
+	if (SprayEffectComponent->GetAsset() != System)
+	{
+		SprayEffectComponent->DeactivateImmediate();
+		SprayEffectComponent->SetAsset(System);
+	}
+	SprayEffectComponent->SetRelativeScale3D(
+		FVector(1.0f, SprayVisualWidthScale, SprayVisualWidthScale));
+
+	SetSprayEffectStrength(Strength);
+	if (!SprayEffectComponent->IsActive())
+	{
+		SprayEffectComponent->Activate(true);
+	}
+}
+
+void AFireFighter::SetSprayEffectStrength(float Strength)
+{
+	if (SprayEffectComponent)
+	{
+		SprayEffectComponent->SetVariableFloat(
+			TEXT("User.SprayStrength"), FMath::Clamp(Strength, 0.0f, 1.0f));
+	}
+}
+
+void AFireFighter::StopSprayEffect()
+{
+	// Keep the Niagara system alive so already spawned powder can slow down and
+	// fade naturally. A strength of zero must drive each emitter's spawn rate to
+	// zero; pressing fire again can then resume spawning without a reactivation race.
+	SetSprayEffectStrength(0.0f);
 }
 
 void AFireFighter::Tick(float DeltaSeconds)

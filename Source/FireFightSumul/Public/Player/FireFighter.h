@@ -9,6 +9,8 @@
 class UCameraComponent;
 class UEnhancedInputLocalPlayerSubsystem;
 class UInputMappingContext;
+class UNiagaraComponent;
+class UNiagaraSystem;
 class UPlayerInteractionComponent;
 class USceneComponent;
 class USkeletalMeshComponent;
@@ -31,6 +33,9 @@ public:
 	void SetHoseEquipped(bool bEquipped);
 
 	const USceneComponent* GetEquippedNozzle() const;
+	void StartSprayEffect(UNiagaraSystem* System, float Strength);
+	void SetSprayEffectStrength(float Strength);
+	void StopSprayEffect();
 
 protected:
 	virtual void BeginPlay() override;
@@ -51,6 +56,13 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Extinguisher", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> NozzleTip;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Extinguisher", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UNiagaraComponent> SprayEffectComponent;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Extinguisher|Effects",
+		meta = (ClampMin = "1.0", ClampMax = "3.0"))
+	float SprayVisualWidthScale = 1.65f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPlayerInteractionComponent> InteractionComponent;

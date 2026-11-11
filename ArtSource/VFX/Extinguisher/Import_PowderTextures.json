@@ -1,0 +1,16 @@
+{
+  "ImportGroups": [
+    {
+      "GroupName": "ExtinguisherPowderTextures",
+      "Filenames": [
+        "D:/Desktop/FireFightSumul/ArtSource/VFX/Extinguisher/T_PowderPuff_SubUV_4x4.png",
+        "D:/Desktop/FireFightSumul/ArtSource/VFX/Extinguisher/T_PowderSpeck.png",
+        "D:/Desktop/FireFightSumul/ArtSource/VFX/Extinguisher/T_PowderNoise.png"
+      ],
+      "DestinationPath": "/Game/_Effect/Extinguisher/Textures",
+      "FactoryName": "TextureFactory",
+      "bReplaceExisting": false,
+      "bSkipReadOnly": true
+    }
+  ]
+}

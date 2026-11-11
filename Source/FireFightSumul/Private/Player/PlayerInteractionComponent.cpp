@@ -17,6 +17,7 @@
 #include "MapObjects/Interactable.h"
 #include "MapObjects/LockableDoor.h"
 #include "MapObjects/WorldExtinguisher.h"
+#include "NiagaraSystem.h"
 #include "Player/FireFighter.h"
 #include "Player/FireFighterPlayerController.h"
 
@@ -144,6 +145,12 @@ void UPlayerInteractionComponent::PrimaryInteract()
 	}
 	const AWorldExtinguisher* Extinguisher = EquippedExtinguisher.Get();
 	bSpraying = Player->GetEquippedNozzle() && Extinguisher && Extinguisher->GetRemainingAgentKg() > 0.0f;
+	if (bSpraying)
+	{
+		const UExtinguisherDataAsset* Data = Extinguisher->GetExtinguisherData();
+		UNiagaraSystem* SpraySystem = Data ? Data->SprayEffect.LoadSynchronous() : nullptr;
+		Player->StartSprayEffect(SpraySystem, Extinguisher->GetRemainingAgentPerformanceFactor());
+	}
 	if (!bSpraying && Extinguisher && Extinguisher->GetRemainingAgentKg() <= 0.0f)
 	{
 		ReportTrainingFeedback(ETrainingFeedbackType::ExtinguisherEmpty);
@@ -168,7 +175,7 @@ void UPlayerInteractionComponent::InteractWithDoor()
 
 void UPlayerInteractionComponent::ContinuePrimaryInteract()
 {
-	const AFireFighter* Player = Cast<AFireFighter>(GetOwner());
+	AFireFighter* Player = Cast<AFireFighter>(GetOwner());
 	if (AFireFighterPlayerController* Controller = Player ? Cast<AFireFighterPlayerController>(Player->GetController()) : nullptr;
 		Controller && Controller->IsInspectingExtinguisher())
 	{
@@ -203,6 +210,7 @@ void UPlayerInteractionComponent::ContinuePrimaryInteract()
 	}
 
 	const float PerformanceFactor = Extinguisher->GetRemainingAgentPerformanceFactor();
+	Player->SetSprayEffectStrength(PerformanceFactor);
 	const float RequestedAgentKg = DischargeRateKgPerSecond * GetWorld()->GetDeltaSeconds();
 	const float UsedAgentKg = Extinguisher->ConsumeAgentKg(RequestedAgentKg);
 	ETrainingFeedbackType FeedbackType = ETrainingFeedbackType::None;
@@ -237,7 +245,11 @@ void UPlayerInteractionComponent::EndPrimaryInteract()
 	{
 		ReportTrainingFeedback(ETrainingFeedbackType::None);
 	}
-	const AFireFighter* Player = Cast<AFireFighter>(GetOwner());
+	AFireFighter* Player = Cast<AFireFighter>(GetOwner());
+	if (Player)
+	{
+		Player->StopSprayEffect();
+	}
 	if (AFireFighterPlayerController* Controller = Player ? Cast<AFireFighterPlayerController>(Player->GetController()) : nullptr)
 	{
 		Controller->EndExtinguisherPinDrag();

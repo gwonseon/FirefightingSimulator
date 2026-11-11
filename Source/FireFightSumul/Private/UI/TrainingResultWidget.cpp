@@ -9,11 +9,11 @@
 
 namespace
 {
-	const FName TrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
+	const FName ResultStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
 
 	FText GetTrainingText(const TCHAR* Key)
 	{
-		return FText::FromStringTable(TrainingStringTableId, Key);
+		return FText::FromStringTable(ResultStringTableId, Key);
 	}
 
 	FLinearColor ColorFromHex(const TCHAR* Hex)

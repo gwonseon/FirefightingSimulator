@@ -6,6 +6,7 @@
 #include "Components/SizeBox.h"
 #include "Components/Spacer.h"
 #include "Components/TextBlock.h"
+#include "Training/FireTrainingTypes.h"
 
 void UHUDWidget::SetCrosshairVisible(bool bVisible)
 {
@@ -26,8 +27,35 @@ void UHUDWidget::SetFireStatus(float IntensityRatio)
 	PercentFormat.SetMaximumFractionalDigits(0);
 	FirePercentText->SetText(FText::AsPercent(Ratio, &PercentFormat));
 	FireIntensityBar->SetPercent(Ratio);
+	FireClassText->SetVisibility(ESlateVisibility::HitTestInvisible);
 	FireIntensityBar->SetVisibility(ESlateVisibility::HitTestInvisible);
 	FireStatusPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UHUDWidget::SetFireClass(EFireClass FireClass)
+{
+	FText ClassText;
+	switch (FireClass)
+	{
+	case EFireClass::A:
+		ClassText = NSLOCTEXT("FireHUD", "ClassA", "A급 일반화재");
+		break;
+	case EFireClass::B:
+		ClassText = NSLOCTEXT("FireHUD", "ClassB", "B급 유류화재");
+		break;
+	case EFireClass::C:
+		ClassText = NSLOCTEXT("FireHUD", "ClassC", "C급 전기화재");
+		break;
+	case EFireClass::K:
+		ClassText = NSLOCTEXT("FireHUD", "ClassK", "K급 주방화재");
+		break;
+	default:
+		ClassText = NSLOCTEXT("FireHUD", "ClassUnknown", "화재 등급 미상");
+		break;
+	}
+
+	FireClassText->SetText(ClassText);
+	FireClassText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UHUDWidget::ShowFireExtinguished()
@@ -38,6 +66,7 @@ void UHUDWidget::ShowFireExtinguished()
 	}
 
 	FirePercentText->SetText(NSLOCTEXT("FireHUD", "Extinguished", "진압 완료"));
+	FireClassText->SetVisibility(ESlateVisibility::Collapsed);
 	FireIntensityBar->SetVisibility(ESlateVisibility::Collapsed);
 	FireStatusPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
 }

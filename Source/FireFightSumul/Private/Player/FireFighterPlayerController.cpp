@@ -15,7 +15,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogExtinguisherInspection, Log, All);
 
 namespace
 {
-	const FName TrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
+	const FName PlayerTrainingStringTableId(TEXT("/Game/_Data/ST_FireTraining.ST_FireTraining"));
 	constexpr double FeedbackHoldSeconds = 0.5;
 	constexpr float FeedbackDisplaySeconds = 2.0f;
 	constexpr double FeedbackCooldownSeconds = 3.0;
@@ -25,31 +25,31 @@ namespace
 		switch (Type)
 		{
 		case ETrainingFeedbackType::TooClose:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.TooClose"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.TooClose"));
 		case ETrainingFeedbackType::TooFar:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.TooFar"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.TooFar"));
 		case ETrainingFeedbackType::AimTooHigh:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.AimTooHigh"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.AimTooHigh"));
 		case ETrainingFeedbackType::OffCenter:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.OffCenter"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.OffCenter"));
 		case ETrainingFeedbackType::Occluded:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Occluded"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.Occluded"));
 		case ETrainingFeedbackType::ExtinguisherLow:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.ExtinguisherLow"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.ExtinguisherLow"));
 		case ETrainingFeedbackType::ExtinguisherEmpty:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.ExtinguisherEmpty"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.ExtinguisherEmpty"));
 		case ETrainingFeedbackType::EvacuateNow:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.EvacuateNow"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.EvacuateNow"));
 		case ETrainingFeedbackType::GoodAim:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.GoodAim"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.GoodAim"));
 		case ETrainingFeedbackType::Reignited:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Reignited"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.Reignited"));
 		case ETrainingFeedbackType::Monitoring:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.Monitoring"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.Monitoring"));
 		case ETrainingFeedbackType::WrongExtinguisher:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.WrongExtinguisher"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.WrongExtinguisher"));
 		case ETrainingFeedbackType::SweepRequired:
-			return FText::FromStringTable(TrainingStringTableId, TEXT("Feedback.SweepRequired"));
+			return FText::FromStringTable(PlayerTrainingStringTableId, TEXT("Feedback.SweepRequired"));
 		default:
 			return FText::GetEmpty();
 		}
@@ -537,6 +537,7 @@ void AFireFighterPlayerController::RefreshFocusedTarget()
 		GetWorldTimerManager().ClearTimer(FireCompletionTimer);
 		NewFire->OnIntensityChanged.AddUObject(
 			this, &AFireFighterPlayerController::HandleFireIntensityChanged);
+		HUDWidget->SetFireClass(NewFire->GetFireClass());
 		HUDWidget->SetFireStatus(NewFire->GetIntensityRatio());
 	}
 	else if (!GetWorldTimerManager().IsTimerActive(FireCompletionTimer))

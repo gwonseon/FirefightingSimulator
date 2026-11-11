@@ -10,6 +10,7 @@ class UProgressBar;
 class USizeBox;
 class USpacer;
 class UTextBlock;
+enum class EFireClass : uint8;
 
 UCLASS(Abstract, Blueprintable)
 class FIREFIGHTSUMUL_API UHUDWidget : public UUserWidget
@@ -21,6 +22,7 @@ public:
 	void SetCrosshairVisible(bool bVisible);
 
 	void SetFireStatus(float IntensityRatio);
+	void SetFireClass(EFireClass FireClass);
 	void ShowFireExtinguished();
 	void HideFireStatus();
 	void ShowFireUncontrollable();
@@ -44,6 +46,9 @@ private:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> FirePercentText;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UTextBlock> FireClassText;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UBorder> FireUncontrollablePanel;

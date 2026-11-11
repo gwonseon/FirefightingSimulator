@@ -21,3 +21,6 @@ Build/Receipts/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local-only design documents and generated artifacts
+*.local.*

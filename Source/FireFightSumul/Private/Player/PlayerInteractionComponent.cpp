@@ -534,7 +534,10 @@ AActor* UPlayerInteractionComponent::FindFocusedActor(
 	FVector Start;
 	FRotator ViewRotation;
 	Controller->GetPlayerViewPoint(Start, ViewRotation);
-	const FVector End = Start + ViewRotation.Vector() * InteractionDistance;
+	const float TraceDistance = Channel == AimTraceChannel
+		? FireAimDetectionDistance
+		: InteractionDistance;
+	const FVector End = Start + ViewRotation.Vector() * TraceDistance;
 	const FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PlayerInteraction), false, &Player);
 	FHitResult Hit;
 	World->LineTraceSingleByChannel(Hit, Start, End, Channel, QueryParams);
@@ -553,7 +556,7 @@ AActor* UPlayerInteractionComponent::FindFocusedActor(
 	if (InputName)
 	{
 		UE_LOG(LogDoorInteraction, Log, TEXT("InteractionTrace: Input=%s Player=%s HitActor=%s HitComponent=%s RangeCm=%.0f"),
-			InputName, *Player.GetName(), *GetNameSafe(Target), *GetNameSafe(Hit.GetComponent()), InteractionDistance);
+			InputName, *Player.GetName(), *GetNameSafe(Target), *GetNameSafe(Hit.GetComponent()), TraceDistance);
 	}
 	return Target;
 }

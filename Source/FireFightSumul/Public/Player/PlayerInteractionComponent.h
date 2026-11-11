@@ -75,4 +75,7 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Interaction", meta = (ClampMin = "0.0", Units = "cm"))
 	float InteractionDistance = 300.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Interaction|Aim", meta = (ClampMin = "0.0", Units = "cm"))
+	float FireAimDetectionDistance = 1000.0f;
 };

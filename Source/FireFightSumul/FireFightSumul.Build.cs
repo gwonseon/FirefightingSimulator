@@ -9,6 +9,6 @@ public class FireFightSumul : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "UMG" });
-		PrivateDependencyModuleNames.Add("Niagara");
+		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "Slate", "SlateCore" });
 	}
 }

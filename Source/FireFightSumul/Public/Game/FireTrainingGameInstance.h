@@ -6,6 +6,7 @@
 #include "FireTrainingGameInstance.generated.h"
 
 class UFireScenarioDataAsset;
+class IInputProcessor;
 
 UCLASS()
 class FIREFIGHTSUMUL_API UFireTrainingGameInstance : public UGameInstance
@@ -13,6 +14,9 @@ class FIREFIGHTSUMUL_API UFireTrainingGameInstance : public UGameInstance
 	GENERATED_BODY()
 
 public:
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
 	UFUNCTION(BlueprintCallable, Category = "Fire Training|Navigation")
 	bool SelectScenario(UFireScenarioDataAsset* InScenario);
 
@@ -47,6 +51,8 @@ public:
 	void ClearTrainingResult();
 
 private:
+	TSharedPtr<IInputProcessor> EscapeToQuitInputProcessor;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UFireScenarioDataAsset> SelectedScenario;
 

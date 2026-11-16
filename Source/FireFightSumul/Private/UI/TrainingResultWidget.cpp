@@ -88,6 +88,13 @@ namespace
 			return TEXT("/Game/_Image/Icon_Result_Timeout_local.Icon_Result_Timeout_local");
 		}
 	}
+	const TCHAR* ResolveBackgroundPath(const FTrainingResult& Result)
+	{
+		return Result.Outcome == ETrainingOutcome::Failed
+			? TEXT("/Game/_Image/BG_Start_Burned_local.BG_Start_Burned_local")
+			: TEXT("/Game/_Image/BG_Start_LeftHouseScorched_local.BG_Start_LeftHouseScorched_local");
+	}
+
 }
 
 void UTrainingResultWidget::NativeOnInitialized()
@@ -128,6 +135,14 @@ void UTrainingResultWidget::ApplyTrainingResult(const FTrainingResult& Result)
 	if (HeaderText)
 	{
 		HeaderText->SetText(GetTrainingText(TEXT("Result.Header")));
+	}
+	if (Background)
+	{
+		if (UTexture2D* BackgroundTexture = LoadObject<UTexture2D>(
+			nullptr, ResolveBackgroundPath(Result)))
+		{
+			Background->SetBrushFromTexture(BackgroundTexture, false);
+		}
 	}
 	if (AccentLine)
 	{

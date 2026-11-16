@@ -23,6 +23,9 @@ protected:
 	TObjectPtr<UTextBlock> HeaderText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Background;
+
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UBorder> AccentLine;
 
 	UPROPERTY(meta = (BindWidgetOptional))

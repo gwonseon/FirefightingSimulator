@@ -1,5 +1,6 @@
 # Visual Studio
 .vs/
+.idea/
 *.sln
 
 # Unreal Engine generated files
@@ -17,6 +18,7 @@ Saved/
 
 # Build outputs
 Build/Receipts/
+Build/Windows/FileOpenOrder/
 
 # OS files
 .DS_Store
@@ -24,3 +26,7 @@ Thumbs.db
 
 # Local-only design documents and generated artifacts
 *.local.*
+
+# Vendor handoff outputs
+VendorPackages/
+SetupLogs/
